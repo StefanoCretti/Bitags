@@ -24,9 +24,7 @@ use std::fs;
 ///   the other pattern logic.
 ///
 /// Notes:
-/// - Patterns are the binary complement of the usual bitap implementation
 /// - Due to the usage of u16, max pattern length allowed is 16 characters.
-#[derive(Clone)]
 pub struct BitapPatterns {
     a: u16,
     c: u16,
@@ -55,7 +53,7 @@ impl BitapPatterns {
         }
         return new_self;
     }
-    pub fn get(&self, base: u8) -> &u16 {
+    pub fn get(&self, base: &u8) -> &u16 {
         match base {
             b'A' => &self.a,
             b'C' => &self.c,
@@ -71,7 +69,6 @@ impl BitapPatterns {
 ///
 /// Tag which was obtained from a tag db file. Stores the bitap patterns
 /// and the maximum number of allowed mismatches for alignment purposes.
-#[derive(Clone)]
 pub struct Tag {
     name_arr: [u8; MAX_TAG_NAME_LEN],
     name_len: usize,
@@ -99,15 +96,13 @@ impl Tag {
         };
     }
 
+    /// Return tag name in string form.
     pub fn get_name(&self) -> &str {
         std::str::from_utf8(&self.name_arr[..self.name_len]).unwrap()
     }
 }
 
 /// Load all tags present in a tags db file as bitap tags in a single vector.
-///
-/// TODO: Add reverse tags.
-
 pub fn get_bitap_tags(
     tags_file: &std::path::PathBuf,
     name_pos: usize,

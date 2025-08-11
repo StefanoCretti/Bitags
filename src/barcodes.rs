@@ -2,19 +2,16 @@ use crate::tags::Tag;
 
 const MAX_MISM: usize = 2;
 
-fn match_pattern(sequence: &str, tag: &Tag) -> Option<u8> {
+fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
     // Moving this allocation outside of the function does not
     // seem to do much, so left here for now.
     let mut state: [u16; MAX_MISM + 1] = [!1u16; MAX_MISM + 1];
     let match_mask = 1u16 << tag.len;
-
-    for (i, base) in sequence.bytes().enumerate() {
+    for (i, base) in sequence.iter().enumerate() {
         let mut old_state = state[0];
-        let base_patt = tag.patterns.get(base);
-
+        let base_patt = tag.patterns.get(&base);
         state[0] |= base_patt;
         state[0] <<= 1u8;
-
         // Loop unrolling does not look pretty at all, but it cuts time
         // in half so it is, unfortunately, worth the loss in readability.
         match tag.max_mism {
@@ -38,6 +35,7 @@ fn match_pattern(sequence: &str, tag: &Tag) -> Option<u8> {
                 }
             }
             _ => {
+                // With max mismatch set to 2 this branch should never happen
                 for m in 1..=tag.max_mism {
                     let tmp_state = state[m];
                     state[m] = (old_state & (state[m] | base_patt)) << 1;
@@ -49,14 +47,9 @@ fn match_pattern(sequence: &str, tag: &Tag) -> Option<u8> {
             }
         }
     }
-
     return None;
 }
 
-pub struct BarcodeBuilder {
-    bitap_tags: Vec<(u8, Tag)>,
-    hit_buffer: Vec<(u8, Tag)>,
-    candidates: Vec<(u8, Tag)>,
 // Return a bool depending of the presence of overlaps in a set of tags
 //
 // For each tag, check whether its starting position is bigger than the
@@ -132,11 +125,18 @@ fn sanitize_barcode(aligned_tags: &mut Vec<(u8, &Tag)>) {
     aligned_tags.clear();
 }
 
+// Reusable struct to find tags in a read sequence.
+//
+// TODO: Maybe add some stats for diagnostic purposes (num barcoded, overlaps...)
+pub struct BarcodeBuilder<'a> {
+    bitap_tags: Vec<(u8, &'a Tag)>,
+    hit_buffer: Vec<(u8, &'a Tag)>,
+    candidates: Vec<(u8, &'a Tag)>,
 }
 
-impl BarcodeBuilder {
-    pub fn new(tags: &[Tag]) -> Self {
-        let bitap_tags: Vec<(u8, Tag)> = tags.into_iter().map(|tag| (0u8, tag.clone())).collect();
+impl<'a> BarcodeBuilder<'a> {
+    pub fn new(tags: &'a [Tag]) -> Self {
+        let bitap_tags: Vec<(u8, &Tag)> = tags.into_iter().map(|tag| (0u8, tag)).collect();
 
         // Though technically reachable in extremely unlikely scenarios,
         // this is a VERY generous upper bound to the number of hits.
@@ -149,18 +149,19 @@ impl BarcodeBuilder {
         }
     }
 
-    pub fn get_barcode(&mut self, seq: &str) -> &Vec<(u8, Tag)> {
+    // Find all tags in a read and resolve potential overlaps.
+    pub fn get_barcode(&mut self, seq: &[u8]) -> &Vec<(u8, &'a Tag)> {
         self.hit_buffer.clear();
         self.candidates.clear();
         self.candidates.extend_from_slice(&self.bitap_tags); // Still not the best
 
-        let seq_len: u8 = seq.bytes().len() as u8;
+        let seq_len: u8 = seq.len() as u8;
 
         while !self.candidates.is_empty() {
             self.candidates.retain_mut(|(pos, tag)| {
                 if let Some(new_pos) = match_pattern(&seq[*pos as usize..], tag) {
                     let match_pos = *pos + new_pos;
-                    self.hit_buffer.push((match_pos, tag.clone()));
+                    self.hit_buffer.push((match_pos, tag));
 
                     *pos = match_pos + tag.len as u8;
                     *pos < seq_len
