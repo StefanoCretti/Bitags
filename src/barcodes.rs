@@ -57,6 +57,81 @@ pub struct BarcodeBuilder {
     bitap_tags: Vec<(u8, Tag)>,
     hit_buffer: Vec<(u8, Tag)>,
     candidates: Vec<(u8, Tag)>,
+// Return a bool depending of the presence of overlaps in a set of tags
+//
+// For each tag, check whether its starting position is bigger than the
+// previous tag's end. Returns as soon as one overlap is found.
+fn does_set_overlap(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
+    let mut prev_pos: u8 = aligned_tags[0].0 + aligned_tags[0].1.len as u8;
+    for ind in 1..aligned_tags.len() {
+        if aligned_tags[ind].0 < prev_pos {
+            return true;
+        }
+        prev_pos = aligned_tags[ind].0 + aligned_tags[ind].1.len as u8;
+    }
+    return false;
+}
+
+// Try to solve overlaps by removing a single tag.
+//
+// In turns, try to remove each tag from the set. Select as solutions the
+// maximum non overlapping subset. If no one is found, return false.
+fn leave_one_out(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
+    let mut rm_index: i8 = -1;
+    let mut max_span: usize = 0;
+
+    // Test all possible -1 subsets
+    for ind in 0..aligned_tags.len() {
+        // NOTE: This collect should not affect performance significantly, but
+        // simplifies overlap checking significantly. Replace if needed.
+        let mut subset: Vec<(u8, &Tag)> = aligned_tags
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != ind)
+            .map(|(_, val)| *val)
+            .collect();
+
+        // There are still overlaps, so it is not a valid subset
+        if does_set_overlap(&mut subset) {
+            continue;
+        }
+
+        let span: usize = subset.iter().map(|val| val.1.len).sum();
+
+        if span > max_span {
+            max_span = span;
+            rm_index = ind as i8;
+        }
+    }
+
+    // No match without overlap was found
+    if rm_index == -1 {
+        return false;
+    }
+
+    // Remove chosen tag
+    aligned_tags.remove(rm_index as usize);
+    return true;
+}
+
+fn sanitize_barcode(aligned_tags: &mut Vec<(u8, &Tag)>) {
+    // Not a single overlap, expected to be vast majority of the cases
+    if (aligned_tags.len() == 0) || !does_set_overlap(aligned_tags) {
+        return;
+    }
+
+    // Returns here if the problem could be solved by removing a single tag.
+    if leave_one_out(aligned_tags) {
+        return;
+    }
+
+    // TODO: Add proper removal of multiple overlaps
+    // This function will be way more computationally expensive, but it
+    // should be called so rarely that it should not matter.
+    println!("Unable to solve multiple overlaps, removing all tags from the read");
+    aligned_tags.clear();
+}
+
 }
 
 impl BarcodeBuilder {
@@ -94,11 +169,11 @@ impl BarcodeBuilder {
                 }
             });
         }
-
-        // TODO: Handle overlapping tags
-        // TODO: Handle terminal tags false positives
-
         self.hit_buffer.sort_by_key(|(pos, _)| *pos);
+
+        // Remove overlapping tags, if any
+        sanitize_barcode(&mut self.hit_buffer);
+
         return &self.hit_buffer;
     }
 }
