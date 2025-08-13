@@ -5,6 +5,5 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
-noodles-fastq = "0.20"
 flate2 = "1.1.2"
-bstr = "1.12.0"
+noodles = { version = "0.32.0", features = ["fastq"] }
