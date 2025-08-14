@@ -4,7 +4,8 @@ mod tags;
 use barcodes::BarcodeBuilder;
 
 use flate2::Compression;
-use flate2::read::{GzEncoder, MultiGzDecoder};
+use flate2::read::MultiGzDecoder;
+use flate2::write::GzEncoder;
 use noodles::fastq;
 
 use std::{fs::File, io::BufReader, io::BufWriter};
@@ -14,16 +15,17 @@ pub fn barcode_reads(
     new_fastq: std::path::PathBuf,
     tags_file: std::path::PathBuf,
 ) {
-    let mut reads_iter = File::open(raw_fastq)
+    let mut reads_reader = File::open(raw_fastq)
         .map(MultiGzDecoder::new)
         .map(BufReader::new)
-        .map(fastq::Reader::new)
+        .map(fastq::io::Reader::new)
         .unwrap();
 
-    let output = File::create(new_fastq).unwrap();
-    let gz_encoder = GzEncoder::new(output, Compression::default());
-    let buf_writer = BufWriter::new(gz_encoder);
-    let mut writer = fastq::Writer::new(buf_writer);
+    let mut reads_writer = File::create(new_fastq)
+        .map(|f| GzEncoder::new(f, Compression::default()))
+        .map(BufWriter::new)
+        .map(fastq::io::Writer::new)
+        .unwrap();
 
     let name_pos: usize = 1;
     let seq_pos: usize = 2;
@@ -31,7 +33,7 @@ pub fn barcode_reads(
 
     let tags_vec = tags::get_bitap_tags(&tags_file, name_pos, seq_pos, mism_pos);
     let mut builder = BarcodeBuilder::new(&tags_vec);
-    for (i, res) in reads_iter.records().enumerate() {
+    for (i, res) in reads_reader.records().enumerate() {
         if i % 1_000_000 == 0 {
             println!("Processing read {}", i);
         }
@@ -48,8 +50,8 @@ pub fn barcode_reads(
                 .into_bytes(),
         );
 
-        writer.write_record(&read).unwrap();
+        reads_writer.write_record(&read).unwrap();
     }
 
-    drop(writer);
+    drop(reads_writer);
 }
