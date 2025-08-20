@@ -43,14 +43,14 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
     let chunks_dir: TempDir = tempdir().unwrap();
     let tags_vec = tags::get_bitap_tags(&tags_file, name_pos, seq_pos, mism_pos);
     for (j, batch) in read_batches(&raw_fastq, batch_size).unwrap().enumerate() {
-        println!("Starting to process chunk {j}");
+        println!("Starting to process chunk {:05}", j);
 
         let builder = BarcodeBuilder::new(&tags_vec);
-        let chunk_name = format!("chunk_{}.fq.gz", j);
+        let chunk_name = format!("chunk_{:05}.fq.gz", j);
         let file_writer = fastq_writer(&chunks_dir.path().join(chunk_name))?;
         barcode_batch(batch.unwrap(), builder, file_writer);
 
-        println!("Done processing chunk {j}");
+        println!("Done processing chunk {:05}", j);
     }
 
     println!("Merging chunks...");
