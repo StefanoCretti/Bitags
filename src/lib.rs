@@ -1,44 +1,19 @@
 mod barcodes;
+mod file_ops;
 mod tags;
 
 use barcodes::BarcodeBuilder;
-
-use flate2::Compression;
-use flate2::read::MultiGzDecoder;
-use flate2::write::GzEncoder;
+use file_ops::{Writeable, concat_files, fastq_writer, read_batches};
 use noodles::fastq;
+use std::{io, path};
+use tempfile::{TempDir, tempdir};
 
-use std::{fs::File, io::BufReader, io::BufWriter};
-
-pub fn barcode_reads(
-    raw_fastq: std::path::PathBuf,
-    new_fastq: std::path::PathBuf,
-    tags_file: std::path::PathBuf,
+fn barcode_batch(
+    read_batch: Vec<fastq::Record>,
+    mut builder: BarcodeBuilder,
+    mut file_writer: fastq::io::Writer<io::BufWriter<Writeable>>,
 ) {
-    let mut reads_reader = File::open(raw_fastq)
-        .map(MultiGzDecoder::new)
-        .map(BufReader::new)
-        .map(fastq::io::Reader::new)
-        .unwrap();
-
-    let mut reads_writer = File::create(new_fastq)
-        .map(|f| GzEncoder::new(f, Compression::default()))
-        .map(BufWriter::new)
-        .map(fastq::io::Writer::new)
-        .unwrap();
-
-    let name_pos: usize = 1;
-    let seq_pos: usize = 2;
-    let mism_pos: usize = 3;
-
-    let tags_vec = tags::get_bitap_tags(&tags_file, name_pos, seq_pos, mism_pos);
-    let mut builder = BarcodeBuilder::new(&tags_vec);
-    for (i, res) in reads_reader.records().enumerate() {
-        if i % 1_000_000 == 0 {
-            println!("Processing read {}", i);
-        }
-
-        let mut read = res.unwrap();
+    for mut read in read_batch.into_iter() {
         let hits = builder.get_barcode(read.sequence());
 
         read.description_mut().extend_from_slice(b"::");
@@ -50,8 +25,37 @@ pub fn barcode_reads(
                 .into_bytes(),
         );
 
-        reads_writer.write_record(&read).unwrap();
+        file_writer.write_record(&read).unwrap();
+    }
+    drop(file_writer);
+}
+
+pub fn barcode_reads<P: AsRef<path::Path>>(
+    raw_fastq: P,
+    new_fastq: P,
+    tags_file: P,
+) -> io::Result<()> {
+    let name_pos: usize = 1;
+    let seq_pos: usize = 2;
+    let mism_pos: usize = 3;
+    let batch_size: usize = 500_000;
+
+    let chunks_dir: TempDir = tempdir().unwrap();
+    let tags_vec = tags::get_bitap_tags(&tags_file, name_pos, seq_pos, mism_pos);
+    for (j, batch) in read_batches(&raw_fastq, batch_size).unwrap().enumerate() {
+        println!("Starting to process chunk {j}");
+
+        let builder = BarcodeBuilder::new(&tags_vec);
+        let chunk_name = format!("chunk_{}.fq.gz", j);
+        let file_writer = fastq_writer(&chunks_dir.path().join(chunk_name))?;
+        barcode_batch(batch.unwrap(), builder, file_writer);
+
+        println!("Done processing chunk {j}");
     }
 
-    drop(reads_writer);
+    println!("Merging chunks...");
+    concat_files(chunks_dir, new_fastq)?;
+    println!("Done merging chunks!");
+
+    Ok(())
 }

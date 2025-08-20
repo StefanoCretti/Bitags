@@ -7,3 +7,4 @@ edition = "2024"
 clap = { version = "4.0", features = ["derive"] }
 flate2 = "1.1.2"
 noodles = { version = "0.100.0", features = ["fastq"] }
+tempfile = "3.20.0"

@@ -3,6 +3,7 @@
 const MAX_TAG_NAME_LEN: usize = 64;
 
 use std::fs;
+use std::path;
 
 /// Fixed size container for the bitap patterns of DNA bases.
 ///
@@ -103,8 +104,8 @@ impl Tag {
 }
 
 /// Load all tags present in a tags db file as bitap tags in a single vector.
-pub fn get_bitap_tags(
-    tags_file: &std::path::PathBuf,
+pub fn get_bitap_tags<P: AsRef<path::Path>>(
+    tags_file: P,
     name_pos: usize,
     seq_pos: usize,
     mism_pos: usize,
