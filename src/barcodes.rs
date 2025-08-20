@@ -50,10 +50,10 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
     return None;
 }
 
-// Return a bool depending of the presence of overlaps in a set of tags
-//
-// For each tag, check whether its starting position is bigger than the
-// previous tag's end. Returns as soon as one overlap is found.
+/// Return a bool depending of the presence of overlaps in a set of tags
+///
+/// For each tag, check whether its starting position is bigger than the
+/// previous tag's end. Returns as soon as one overlap is found.
 fn does_set_overlap(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
     let mut prev_pos: u8 = aligned_tags[0].0 + aligned_tags[0].1.len as u8;
     for ind in 1..aligned_tags.len() {
@@ -65,10 +65,10 @@ fn does_set_overlap(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
     return false;
 }
 
-// Try to solve overlaps by removing a single tag.
-//
-// In turns, try to remove each tag from the set. Select as solutions the
-// maximum non overlapping subset. If no one is found, return false.
+/// Try to solve overlaps by removing a single tag.
+///
+/// In turns, try to remove each tag from the set. Select as solutions the
+/// maximum non overlapping subset. If no one is found, return false.
 fn leave_one_out(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
     let mut rm_index: i8 = -1;
     let mut max_span: usize = 0;
@@ -121,13 +121,13 @@ fn sanitize_barcode(aligned_tags: &mut Vec<(u8, &Tag)>) {
     // TODO: Add proper removal of multiple overlaps
     // This function will be way more computationally expensive, but it
     // should be called so rarely that it should not matter.
-    println!("Unable to solve multiple overlaps, removing all tags from the read");
+    //println!("Unable to solve multiple overlaps, removing all tags from the read");
     aligned_tags.clear();
 }
 
-// Reusable struct to find tags in a read sequence.
-//
-// TODO: Maybe add some stats for diagnostic purposes (num barcoded, overlaps...)
+/// Reusable struct to find tags in a read sequence.
+///
+/// TODO: Maybe add some stats for diagnostic purposes (num barcoded, overlaps...)
 pub struct BarcodeBuilder<'a> {
     bitap_tags: Vec<(u8, &'a Tag)>,
     hit_buffer: Vec<(u8, &'a Tag)>,
@@ -149,7 +149,7 @@ impl<'a> BarcodeBuilder<'a> {
         }
     }
 
-    // Find all tags in a read and resolve potential overlaps.
+    /// Find all tags in a read and resolve potential overlaps.
     pub fn get_barcode(&mut self, seq: &[u8]) -> &Vec<(u8, &'a Tag)> {
         self.hit_buffer.clear();
         self.candidates.clear();
