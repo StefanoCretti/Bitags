@@ -26,6 +26,7 @@ use std::path;
 ///
 /// Notes:
 /// - Due to the usage of u16, max pattern length allowed is 16 characters.
+#[derive(Clone)]
 pub struct BitapPatterns {
     a: u16,
     c: u16,
@@ -70,6 +71,7 @@ impl BitapPatterns {
 ///
 /// Tag which was obtained from a tag db file. Stores the bitap patterns
 /// and the maximum number of allowed mismatches for alignment purposes.
+#[derive(Clone)]
 pub struct Tag {
     name_arr: [u8; MAX_TAG_NAME_LEN],
     name_len: usize,
