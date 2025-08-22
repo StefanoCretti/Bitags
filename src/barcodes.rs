@@ -1,12 +1,20 @@
+//! Single read barcoding functionalities (batching, bitap matching, overlap resolution)
+
 use crate::tags::Tag;
 
-const MAX_MISM: usize = 2;
+const MAX_TAG_MISM: usize = 2; // Maximum number of mismatches per tag
+const MAX_TAG_HITS: usize = 64; // Maximum number of tags aligned per read
 
-fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
-    // Moving this allocation outside of the function does not
-    // seem to do much, so left here for now.
-    let mut state: [u16; MAX_MISM + 1] = [!1u16; MAX_MISM + 1];
-    let match_mask = 1u16 << tag.len;
+type AlignedTags<'a> = Vec<(usize, &'a Tag)>;
+
+/// Look for a tag in a DNA/cDNA read using the bitap algorithm
+/// NOTE: Currently tag lenght must be 16 bp or lower
+fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<usize> {
+    // Setup initial arrays (1 for exact match, 1 for each allowed mismatch).
+    // NOTE: this allocation seems to be trivial speed-wise.
+    let mut state: [u16; MAX_TAG_MISM + 1] = [!1u16; MAX_TAG_MISM + 1];
+    let match_mask: u16 = 1u16 << tag.len;
+
     for (i, base) in sequence.iter().enumerate() {
         let mut old_state = state[0];
         let base_patt = tag.patterns.get(&base);
@@ -17,13 +25,13 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
         match tag.max_mism {
             0 => {
                 if (state[0] & match_mask) == 0 {
-                    return Some((1 + i - tag.len) as u8);
+                    return Some(1 + i - tag.len);
                 }
             }
             1 => {
                 state[1] = (old_state & (state[1] | base_patt)) << 1;
                 if (state[1] & match_mask) == 0 {
-                    return Some((1 + i - tag.len) as u8);
+                    return Some(1 + i - tag.len);
                 }
             }
             2 => {
@@ -31,7 +39,7 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
                 state[1] = (old_state & (state[1] | base_patt)) << 1;
                 state[2] = (tmp_state & (state[2] | base_patt)) << 1;
                 if (state[2] & match_mask) == 0 {
-                    return Some((1 + i - tag.len) as u8);
+                    return Some(1 + i - tag.len);
                 }
             }
             _ => {
@@ -42,7 +50,7 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
                     old_state = tmp_state;
                 }
                 if (state[tag.max_mism] & match_mask) == 0 {
-                    return Some((1 + i - tag.len) as u8);
+                    return Some(1 + i - tag.len);
                 }
             }
         }
@@ -54,13 +62,13 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<u8> {
 ///
 /// For each tag, check whether its starting position is bigger than the
 /// previous tag's end. Returns as soon as one overlap is found.
-fn does_set_overlap(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
-    let mut prev_pos: u8 = aligned_tags[0].0 + aligned_tags[0].1.len as u8;
+fn does_set_overlap(aligned_tags: &mut AlignedTags) -> bool {
+    let mut prev_pos: usize = aligned_tags[0].0 + aligned_tags[0].1.len;
     for ind in 1..aligned_tags.len() {
         if aligned_tags[ind].0 < prev_pos {
             return true;
         }
-        prev_pos = aligned_tags[ind].0 + aligned_tags[ind].1.len as u8;
+        prev_pos = aligned_tags[ind].0 + aligned_tags[ind].1.len;
     }
     return false;
 }
@@ -69,7 +77,7 @@ fn does_set_overlap(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
 ///
 /// In turns, try to remove each tag from the set. Select as solutions the
 /// maximum non overlapping subset. If no one is found, return false.
-fn leave_one_out(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
+fn leave_one_out(aligned_tags: &mut AlignedTags) -> bool {
     let mut rm_index: i8 = -1;
     let mut max_span: usize = 0;
 
@@ -77,7 +85,7 @@ fn leave_one_out(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
     for ind in 0..aligned_tags.len() {
         // NOTE: This collect should not affect performance significantly, but
         // simplifies overlap checking significantly. Replace if needed.
-        let mut subset: Vec<(u8, &Tag)> = aligned_tags
+        let mut subset: AlignedTags = aligned_tags
             .iter()
             .enumerate()
             .filter(|(idx, _)| *idx != ind)
@@ -107,74 +115,73 @@ fn leave_one_out(aligned_tags: &mut Vec<(u8, &Tag)>) -> bool {
     return true;
 }
 
-fn sanitize_barcode(aligned_tags: &mut Vec<(u8, &Tag)>) {
+/// Ensure that the barcode is valid (no overlapping tags)
+///
+/// Tags are removed from the barcode until there are no more overlaps.
+/// The problem is defined as finding the maximal non-overlapping set of spans.
+/// Returned solution is guaranteed to be (one of) the optimal.
+///
+/// TODO: Need to add logging for debugging and understanding potentially
+/// problematic pairs of tags.
+fn sanitize_barcode(aligned_tags: &mut AlignedTags) {
+    // Since the zero overlap and singe overlap cases will be by far the most
+    // common, those cases are handled directly with more efficient functions.
+    // For other cases, uses a more general but less efficient approach.
+
     // Not a single overlap, expected to be vast majority of the cases
     if (aligned_tags.len() == 0) || !does_set_overlap(aligned_tags) {
         return;
     }
 
-    // Returns here if the problem could be solved by removing a single tag.
+    // Return here if the problem could be solved by removing a single tag.
     if leave_one_out(aligned_tags) {
         return;
     }
 
-    // TODO: Add proper removal of multiple overlaps
-    // This function will be way more computationally expensive, but it
-    // should be called so rarely that it should not matter.
-    //println!("Unable to solve multiple overlaps, removing all tags from the read");
+    // TODO: Add proper removal of multiple overlaps, currently just give up on the tag.
     aligned_tags.clear();
 }
 
 /// Reusable struct to find tags in a read sequence.
 ///
-/// TODO: Maybe add some stats for diagnostic purposes (num barcoded, overlaps...)
+/// TODO: Add some stats for diagnostic purposes (num barcoded, overlaps...)
 pub struct BarcodeBuilder<'a> {
-    bitap_tags: Vec<(u8, &'a Tag)>,
-    hit_buffer: Vec<(u8, &'a Tag)>,
-    candidates: Vec<(u8, &'a Tag)>,
+    tags: &'a Vec<Tag>,
+    hits: Vec<(usize, &'a Tag)>,
 }
 
 impl<'a> BarcodeBuilder<'a> {
-    pub fn new(tags: &'a [Tag]) -> Self {
-        let bitap_tags: Vec<(u8, &Tag)> = tags.into_iter().map(|tag| (0u8, tag)).collect();
-
-        // Though technically reachable in extremely unlikely scenarios,
-        // this is a VERY generous upper bound to the number of hits.
-        let vec_length: usize = bitap_tags.len();
-
+    /// Initialize a new instance of the struct from a vector of tags.
+    pub fn new(tags: &'a Vec<Tag>) -> Self {
         Self {
-            bitap_tags,
-            hit_buffer: Vec::with_capacity(vec_length),
-            candidates: Vec::with_capacity(vec_length),
+            tags,
+            hits: Vec::with_capacity(MAX_TAG_HITS),
         }
     }
 
     /// Find all tags in a read and resolve potential overlaps.
-    pub fn get_barcode(&mut self, seq: &[u8]) -> &Vec<(u8, &'a Tag)> {
-        self.hit_buffer.clear();
-        self.candidates.clear();
-        self.candidates.extend_from_slice(&self.bitap_tags); // Still not the best
+    pub fn get_barcode(&mut self, seq: &[u8]) -> &Vec<(usize, &'a Tag)> {
+        self.hits.clear();
+        let seq_len = seq.len();
 
-        let seq_len: u8 = seq.len() as u8;
-
-        while !self.candidates.is_empty() {
-            self.candidates.retain_mut(|(pos, tag)| {
-                if let Some(new_pos) = match_pattern(&seq[*pos as usize..], tag) {
-                    let match_pos = *pos + new_pos;
-                    self.hit_buffer.push((match_pos, tag));
-
-                    *pos = match_pos + tag.len as u8;
-                    *pos < seq_len
+        for tag in self.tags.iter() {
+            let mut start_pos: usize = 0;
+            while start_pos + tag.len <= seq_len {
+                if let Some(relative_pos) = match_pattern(&seq[start_pos..], tag) {
+                    // Returned position from match is relative to str slice start
+                    let absolute_pos = start_pos + relative_pos;
+                    self.hits.push((absolute_pos, tag));
+                    start_pos = absolute_pos + tag.len; // Skip over current match
                 } else {
-                    false
+                    break;
                 }
-            });
+            }
         }
-        self.hit_buffer.sort_by_key(|(pos, _)| *pos);
+        self.hits.sort_by_key(|(pos, _)| *pos);
 
         // Remove overlapping tags, if any
-        sanitize_barcode(&mut self.hit_buffer);
+        sanitize_barcode(&mut self.hits);
 
-        return &self.hit_buffer;
+        return &self.hits;
     }
 }

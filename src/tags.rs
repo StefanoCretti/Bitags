@@ -1,4 +1,4 @@
-//! Everything regarding tag creation and handling.
+//! Functionalities to create tag objects for bitap pattern matching.
 
 const MAX_TAG_NAME_LEN: usize = 64;
 

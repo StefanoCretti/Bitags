@@ -1,13 +1,10 @@
-//! Custom I/O functions as well as general file manipulation.
+//! Custom I/O functions for fastq files.
 
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use noodles::fastq;
 
-use std::{
-    fs,
-    io::{self, Write},
-    path,
-};
+use std::io::{Read, Write}; // Inherited traits
+use std::{fs, io, path};
 
 const MB: usize = 1024 * 1024;
 const BUFFER_CAPACITY: usize = 10 * MB;
@@ -22,7 +19,7 @@ enum Readable {
     Bgzip(MultiGzDecoder<fs::File>),
 }
 
-impl io::Read for Readable {
+impl Read for Readable {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Readable::Plain(file) => file.read(buf),
@@ -51,7 +48,7 @@ pub enum Writeable {
     Bgzip(GzEncoder<fs::File>),
 }
 
-impl io::Write for Writeable {
+impl Write for Writeable {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Writeable::Plain(file) => file.write(buf),
@@ -69,10 +66,9 @@ impl io::Write for Writeable {
 
 /// Get a buffered writer to a file path (supports bgzip compression).
 ///
-/// NOTE: Currently using default compression level. This is quite
+/// NOTE: Currently using default compression level. This is a bit
 /// time consuming but it halves file size with respect to the fast
-/// level (which takes about 1/5th of the time). At some point will
-/// probably be replaced with async reader/writers for speedup.
+/// compression level.
 fn get_buff_writer<P: AsRef<path::Path>>(
     sink: P,
     to_compress: bool,
@@ -92,7 +88,7 @@ fn get_buff_writer<P: AsRef<path::Path>>(
 // NOTE: Currently readers and writers are sequential, might need to use async
 //       noodles if IO becomes a significant bottleneck of the pipeline.
 
-/// Struct to return batches of noodle records for parallel processing dispatch.
+/// Iterator of batches of noodle records for parallel processing dispatch.
 pub struct ReadBatches {
     fastq_reader: fastq::io::Reader<io::BufReader<Readable>>,
     batch_size: usize,

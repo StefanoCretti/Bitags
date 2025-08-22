@@ -1,16 +1,25 @@
+//! Parallel barcoding of DNA/cDNA reads using specialized bitap fuzzy matching.
+
 mod barcodes;
-mod file_ops;
+mod fastq_io;
 mod tags;
 
-use barcodes::BarcodeBuilder;
 use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
-use file_ops::{Writeable, concat_files, fastq_writer, read_batches};
 use noodles::fastq;
+
 use std::{io, path, thread};
 use tempfile::{TempDir, tempdir};
 
+use crate::barcodes::BarcodeBuilder;
+use crate::fastq_io::{Writeable, concat_files, fastq_writer, read_batches};
 use crate::tags::Tag;
 
+const NUM_PAD_ZEROS: usize = 6;
+// NOTE: Indirectly binds the number of chunks allowed, because if the number
+// of chunks is 10^NUM_PAD_ZEROS or more, lexycographic order might not be
+// preserved when joining chunks into a single output. Maybe add a check.
+
+/// Process a batch of reads and save them to a dedicated output file.
 fn barcode_batch(
     read_batch: Vec<fastq::Record>,
     mut builder: BarcodeBuilder,
@@ -33,42 +42,62 @@ fn barcode_batch(
     drop(file_writer);
 }
 
+/// Spawn a worker thread which barcodes batches of DNA/cDNA reads.
+///
+/// Worker threads are completely independent from each other (this
+/// includes the output files) in order to facilitate parallelization.
+/// Memory usage of the worker itself is negligible, hence the number
+/// of workers is realistically bound only by the number of chunks which
+/// can be loaded into memory at once.
 fn spawn_worker(
     chunk_rx: Receiver<(usize, Vec<fastq::Record>)>,
     result_tx: Sender<(usize, Result<(), io::Error>)>,
     tags_vec: Vec<Tag>,
     out_dir: path::PathBuf,
 ) -> thread::JoinHandle<()> {
-    let tags_vec = tags_vec.clone();
+    let tags_vec = tags_vec.clone(); // Almost zero cost and avoids lifetimes
 
     thread::spawn(move || {
         while let Ok((chunk_index, batch)) = chunk_rx.recv() {
-            println!("Starting to process chunk {:05}", chunk_index);
+            println!("Starting to process chunk {:0NUM_PAD_ZEROS$}", chunk_index);
 
             let builder = BarcodeBuilder::new(&tags_vec);
-            let chunk_name = format!("chunk_{:05}.fq.gz", chunk_index);
+            let chunk_name = format!("chunk_{:0NUM_PAD_ZEROS$}.fq.gz", chunk_index);
             let file_writer = match fastq_writer(out_dir.join(chunk_name)) {
                 Ok(writer) => writer,
                 Err(e) => {
-                    eprintln!("Failed to create writer for chunk {}: {}", chunk_index, e);
+                    eprintln!(
+                        "Failed to create writer for chunk {:0NUM_PAD_ZEROS$}: {}",
+                        chunk_index, e
+                    );
                     result_tx.send((chunk_index, Err(e))).unwrap();
                     continue;
                 }
             };
 
             barcode_batch(batch, builder, file_writer);
-            println!("Done processing chunk {:05}", chunk_index);
+            println!("Done processing chunk {:0NUM_PAD_ZEROS$}", chunk_index);
 
             result_tx.send((chunk_index, Ok(()))).unwrap();
         }
     })
 }
 
+/// Spawn a reader thread that yields record batches from the input file
+///
+/// The reader creates batches of records from a fastq, but only up to the
+/// number allowed by backpressure (i.e. the number of messages that can
+/// be queued in the output channel). If the queue is full, the thread
+/// is blocked and waits for new queue space to free up.
 fn spawn_reader(
     fastq_file: path::PathBuf,
     batch_size: usize,
     chunk_tx: Sender<(usize, Vec<fastq::Record>)>,
 ) -> thread::JoinHandle<Result<usize, std::io::Error>> {
+    // NOTE: Decompression is performed sequentially, without taking advantage
+    // of the bgzip files. This is easier to implement and currently sufficient
+    // to create batches faster than they are consumed. If IO ever becomes a
+    // limiting factor, consider switching to async decompression.
     thread::spawn(move || -> io::Result<usize> {
         let mut total_chunks = 0;
         for (chunk_num, batch) in read_batches(fastq_file, batch_size).unwrap().enumerate() {
@@ -81,6 +110,11 @@ fn spawn_reader(
     })
 }
 
+/// API to perform read barcoding using the bitap algorithm.
+///
+/// This function is the direct entry point for read barcoding.
+/// If used directly you need to take care of input validation yourself.
+/// There should be no reason to use this rather than the CLI tool.
 pub fn barcode_reads<P: AsRef<path::Path>>(
     raw_fastq: P,
     new_fastq: P,
