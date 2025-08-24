@@ -7,7 +7,7 @@ mod tags;
 use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 use noodles::fastq;
 
-use std::{io, path, thread};
+use std::{fs, io, path, thread};
 use tempfile::{TempDir, tempdir};
 
 use crate::barcodes::BarcodeBuilder;
@@ -18,6 +18,28 @@ const NUM_PAD_ZEROS: usize = 6;
 // NOTE: Indirectly binds the number of chunks allowed, because if the number
 // of chunks is 10^NUM_PAD_ZEROS or more, lexycographic order might not be
 // preserved when joining chunks into a single output. Maybe add a check.
+
+/// Load all tags present in a tags db file as bitap tags in a single vector.
+pub fn get_bitap_tags<P: AsRef<path::Path>>(
+    tags_file: P,
+    name_pos: usize,
+    seq_pos: usize,
+    mism_pos: usize,
+) -> Vec<Tag> {
+    fs::read_to_string(tags_file)
+        .unwrap()
+        .lines()
+        .filter(|x| !x.starts_with("#"))
+        .map(|x| x.split("\t").collect::<Vec<&str>>())
+        .map(|x| {
+            Tag::new(
+                x[name_pos],
+                x[seq_pos],
+                x[mism_pos].parse::<usize>().unwrap(),
+            )
+        })
+        .collect::<Vec<Tag>>()
+}
 
 /// Process a batch of reads and save them to a dedicated output file.
 fn barcode_batch(
@@ -118,16 +140,12 @@ fn spawn_reader(
 pub fn barcode_reads<P: AsRef<path::Path>>(
     raw_fastq: P,
     new_fastq: P,
-    tags_file: P,
+    bitap_tags: Vec<Tag>,
+    num_workers: usize,
+    batch_size: usize,
 ) -> io::Result<()> {
-    let name_pos: usize = 1;
-    let seq_pos: usize = 2;
-    let mism_pos: usize = 3;
-    let batch_size: usize = 500_000;
-    let num_workers: usize = 8;
-
+    // Tmp storage for the generated chunks
     let chunks_dir: TempDir = tempdir().unwrap();
-    let tags_vec = tags::get_bitap_tags(&tags_file, name_pos, seq_pos, mism_pos);
 
     // Create channels for thread communication
     let (data_tx, data_rx) = bounded::<(usize, Vec<fastq::Record>)>(num_workers);
@@ -139,7 +157,7 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
         let worker = spawn_worker(
             data_rx.clone(),
             done_tx.clone(),
-            tags_vec.clone(),
+            bitap_tags.clone(),
             chunks_dir.path().to_path_buf(),
         );
         worker_handles.push(worker);

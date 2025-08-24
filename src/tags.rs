@@ -2,9 +2,6 @@
 
 const MAX_TAG_NAME_LEN: usize = 64;
 
-use std::fs;
-use std::path;
-
 /// Fixed size container for the bitap patterns of DNA bases.
 ///
 /// Creates and stores the bitap pattern for each DNA base (A, C, T, G).
@@ -103,26 +100,4 @@ impl Tag {
     pub fn get_name(&self) -> &str {
         std::str::from_utf8(&self.name_arr[..self.name_len]).unwrap()
     }
-}
-
-/// Load all tags present in a tags db file as bitap tags in a single vector.
-pub fn get_bitap_tags<P: AsRef<path::Path>>(
-    tags_file: P,
-    name_pos: usize,
-    seq_pos: usize,
-    mism_pos: usize,
-) -> Vec<Tag> {
-    fs::read_to_string(tags_file)
-        .unwrap()
-        .lines()
-        .filter(|x| !x.starts_with("#"))
-        .map(|x| x.split("\t").collect::<Vec<&str>>())
-        .map(|x| {
-            Tag::new(
-                x[name_pos],
-                x[seq_pos],
-                x[mism_pos].parse::<usize>().unwrap(),
-            )
-        })
-        .collect::<Vec<Tag>>()
 }
