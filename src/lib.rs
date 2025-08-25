@@ -5,9 +5,10 @@ mod fastq_io;
 mod tags;
 
 use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
+use indicatif::{ProgressBar, ProgressStyle};
 use noodles::fastq;
 
-use std::{fs, io, path, thread};
+use std::{fs, io, path, sync::Arc, thread};
 use tempfile::{TempDir, tempdir};
 
 use crate::barcodes::BarcodeBuilder;
@@ -66,8 +67,8 @@ fn barcode_batch(
 
 /// Spawn a worker thread which barcodes batches of DNA/cDNA reads.
 ///
-/// Worker threads are completely independent from each other (this
-/// includes the output files) in order to facilitate parallelization.
+/// Worker threads are completely independent from each other (aside
+/// from the progress bar) in order to facilitate parallelization.
 /// Memory usage of the worker itself is negligible, hence the number
 /// of workers is realistically bound only by the number of chunks which
 /// can be loaded into memory at once.
@@ -76,13 +77,12 @@ fn spawn_worker(
     result_tx: Sender<(usize, Result<(), io::Error>)>,
     tags_vec: Vec<Tag>,
     out_dir: path::PathBuf,
+    progress_bar: Arc<ProgressBar>,
 ) -> thread::JoinHandle<()> {
     let tags_vec = tags_vec.clone(); // Almost zero cost and avoids lifetimes
 
     thread::spawn(move || {
         while let Ok((chunk_index, batch)) = chunk_rx.recv() {
-            println!("Starting to process chunk {:0NUM_PAD_ZEROS$}", chunk_index);
-
             let builder = BarcodeBuilder::new(&tags_vec);
             let chunk_name = format!("chunk_{:0NUM_PAD_ZEROS$}.fq.gz", chunk_index);
             let file_writer = match fastq_writer(out_dir.join(chunk_name)) {
@@ -98,7 +98,9 @@ fn spawn_worker(
             };
 
             barcode_batch(batch, builder, file_writer);
-            println!("Done processing chunk {:0NUM_PAD_ZEROS$}", chunk_index);
+
+            progress_bar.set_message(format!("Done with chunk {}", chunk_index));
+            progress_bar.inc(1);
 
             result_tx.send((chunk_index, Ok(()))).unwrap();
         }
@@ -115,6 +117,7 @@ fn spawn_reader(
     fastq_file: path::PathBuf,
     batch_size: usize,
     chunk_tx: Sender<(usize, Vec<fastq::Record>)>,
+    progress_bar: Arc<ProgressBar>,
 ) -> thread::JoinHandle<Result<usize, std::io::Error>> {
     // NOTE: Decompression is performed sequentially, without taking advantage
     // of the bgzip files. This is easier to implement and currently sufficient
@@ -124,7 +127,10 @@ fn spawn_reader(
         let mut total_chunks = 0;
         for (chunk_num, batch) in read_batches(fastq_file, batch_size).unwrap().enumerate() {
             match chunk_tx.send((chunk_num, batch.unwrap())) {
-                Ok(_) => total_chunks += 1,
+                Ok(_) => {
+                    total_chunks += 1;
+                    progress_bar.set_length(total_chunks as u64);
+                }
                 Err(_) => break,
             }
         }
@@ -151,6 +157,16 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
     let (data_tx, data_rx) = bounded::<(usize, Vec<fastq::Record>)>(num_workers);
     let (done_tx, done_rx) = unbounded::<(usize, Result<(), io::Error>)>();
 
+    // Create progress to pass to the
+    let progress_bar = Arc::new(ProgressBar::new(0));
+    progress_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] Processed {pos}/{len} queued chunks ({msg})")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+    progress_bar.set_message("Starting to queue chunks.");
+
     // Create worker threads
     let mut worker_handles = Vec::<thread::JoinHandle<()>>::with_capacity(num_workers);
     for _ in 0..num_workers {
@@ -159,13 +175,19 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
             done_tx.clone(),
             bitap_tags.clone(),
             chunks_dir.path().to_path_buf(),
+            Arc::clone(&progress_bar),
         );
         worker_handles.push(worker);
     }
     drop(done_tx); // Need to remove all references to a channel to close it
 
     // Chunks are still read serially by the reader thread
-    let reader_handle = spawn_reader(raw_fastq.as_ref().to_path_buf(), batch_size, data_tx);
+    let reader_handle = spawn_reader(
+        raw_fastq.as_ref().to_path_buf(),
+        batch_size,
+        data_tx,
+        Arc::clone(&progress_bar),
+    );
     let total_chunks = reader_handle.join().unwrap()?;
 
     // Collect completion results
@@ -189,6 +211,9 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
         handle.join().unwrap();
     }
 
+    // Finish progress bar
+    progress_bar.finish_with_message("Processed all chunks.");
+
     // Check for errors
     if !errors.is_empty() {
         eprintln!("Errors occurred in {} chunks:", errors.len());
@@ -203,7 +228,7 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
 
     println!("Merging chunks...");
     concat_files(chunks_dir, new_fastq)?;
-    println!("Done merging chunks!");
+    println!("Done merging chunks.");
 
     Ok(())
 }
