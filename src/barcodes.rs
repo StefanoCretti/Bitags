@@ -2,12 +2,15 @@
 
 use crate::tags::Tag;
 
+use itertools::Itertools;
+
 const MAX_TAG_MISM: usize = 2; // Maximum number of mismatches per tag
 const MAX_TAG_HITS: usize = 64; // Maximum number of tags aligned per read
 
 type AlignedTags<'a> = Vec<(usize, &'a Tag)>;
 
 /// Look for a tag in a DNA/cDNA read using the bitap algorithm
+///
 /// NOTE: Currently tag lenght must be 16 bp or lower
 fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<usize> {
     // Setup initial arrays (1 for exact match, 1 for each allowed mismatch).
@@ -58,88 +61,66 @@ fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<usize> {
     return None;
 }
 
-/// Return a bool depending of the presence of overlaps in a set of tags
+/// Return the size of the non-overlapping span of a set of tags.
 ///
-/// For each tag, check whether its starting position is bigger than the
-/// previous tag's end. Returns as soon as one overlap is found.
-fn does_set_overlap(aligned_tags: &mut AlignedTags) -> bool {
-    let mut prev_pos: usize = aligned_tags[0].0 + aligned_tags[0].1.len;
-    for ind in 1..aligned_tags.len() {
-        if aligned_tags[ind].0 < prev_pos {
-            return true;
+/// If the tags do not overlap, return the span (sum of all tag lengths).
+/// As soon as an overlap is found, return zero.
+fn comb_span(aligned_tags: &AlignedTags, subset: &[usize]) -> usize {
+    let mut prev_end = 0;
+    let mut tot_span = 0;
+
+    for &ind in subset {
+        let (pos, tag) = &aligned_tags[ind];
+        if *pos < prev_end {
+            return 0; // There is an overlap
         }
-        prev_pos = aligned_tags[ind].0 + aligned_tags[ind].1.len;
+        prev_end = pos + tag.len;
+        tot_span += tag.len;
     }
-    return false;
+    tot_span
 }
 
-/// Try to solve overlaps by removing a single tag.
+/// Ensure that the barcode does not contain overlaps.
 ///
-/// In turns, try to remove each tag from the set. Select as solutions the
-/// maximum non overlapping subset. If no one is found, return false.
-fn leave_one_out(aligned_tags: &mut AlignedTags) -> bool {
-    let mut rm_index: i8 = -1;
-    let mut max_span: usize = 0;
-
-    // Test all possible -1 subsets
-    for ind in 0..aligned_tags.len() {
-        // NOTE: This collect should not affect performance significantly, but
-        // simplifies overlap checking significantly. Replace if needed.
-        let mut subset: AlignedTags = aligned_tags
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| *idx != ind)
-            .map(|(_, val)| *val)
-            .collect();
-
-        // There are still overlaps, so it is not a valid subset
-        if does_set_overlap(&mut subset) {
-            continue;
-        }
-
-        let span: usize = subset.iter().map(|val| val.1.len).sum();
-
-        if span > max_span {
-            max_span = span;
-            rm_index = ind as i8;
-        }
-    }
-
-    // No match without overlap was found
-    if rm_index == -1 {
-        return false;
-    }
-
-    // Remove chosen tag
-    aligned_tags.remove(rm_index as usize);
-    return true;
-}
-
-/// Ensure that the barcode is valid (no overlapping tags)
-///
-/// Tags are removed from the barcode until there are no more overlaps.
 /// The problem is defined as finding the maximal non-overlapping set of spans.
-/// Returned solution is guaranteed to be (one of) the optimal.
+/// Returned solution is guaranteed to be the optimal. If multiple solutions
+/// have the same span, return the one favoring tag positions close to the
+/// read start.
 ///
-/// TODO: Need to add logging for debugging and understanding potentially
-/// problematic pairs of tags.
-fn sanitize_barcode(aligned_tags: &mut AlignedTags) {
-    // Since the zero overlap and singe overlap cases will be by far the most
-    // common, those cases are handled directly with more efficient functions.
-    // For other cases, uses a more general but less efficient approach.
+/// NOTE: assumes that tags are sorted by alignment start position.
+fn remove_overlaps(aligned_tags: &mut AlignedTags) {
+    // NOTE: Dynamic programming approach is technically algorithmically better
+    // but it saves a negligible amount of time, so sticking to this for clarity.
 
-    // Not a single overlap, expected to be vast majority of the cases
-    if (aligned_tags.len() == 0) || !does_set_overlap(aligned_tags) {
-        return;
+    let num_tags: usize = aligned_tags.len();
+    if num_tags == 0 {
+        return; // Empty barcode
     }
 
-    // Return here if the problem could be solved by removing a single tag.
-    if leave_one_out(aligned_tags) {
-        return;
+    let mut num_removed: usize = 0;
+    let mut best_comb: Vec<usize> = Vec::with_capacity(num_tags);
+    let mut best_span: usize = 0;
+
+    while num_removed < num_tags {
+        // Test ALL combinations for a set size to guarantee optimal solution.
+        for comb in (0..num_tags).combinations(num_tags - num_removed) {
+            let span = comb_span(aligned_tags, &comb);
+            if span > best_span {
+                best_span = span;
+                best_comb = comb;
+            }
+        }
+
+        if best_span > 0 {
+            break; // At least one non overlapping set was found
+        }
+
+        num_removed += 1;
     }
 
-    // TODO: Add proper removal of multiple overlaps, currently just give up on the tag.
-    aligned_tags.clear();
+    // TODO: Need to add logging for debugging purposes
+
+    *aligned_tags = best_comb.iter().map(|&i| aligned_tags[i]).collect()
 }
 
 /// Reusable struct to find tags in a read sequence.
@@ -177,10 +158,10 @@ impl<'a> BarcodeBuilder<'a> {
                 }
             }
         }
-        self.hits.sort_by_key(|(pos, _)| *pos);
 
-        // Remove overlapping tags, if any
-        sanitize_barcode(&mut self.hits);
+        // Sanitize the barcode
+        self.hits.sort_by_key(|(pos, _)| *pos);
+        remove_overlaps(&mut self.hits);
 
         return &self.hits;
     }
