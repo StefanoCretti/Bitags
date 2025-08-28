@@ -69,7 +69,7 @@ impl Write for Writeable {
 /// NOTE: Currently using default compression level. This is a bit
 /// time consuming but it halves file size with respect to the fast
 /// compression level.
-fn get_buff_writer<P: AsRef<path::Path>>(
+pub fn get_buff_writer<P: AsRef<path::Path>>(
     sink: P,
     to_compress: bool,
 ) -> io::Result<io::BufWriter<Writeable>> {

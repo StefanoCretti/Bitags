@@ -37,6 +37,10 @@ struct Cli {
     /// Number of parallel worker threads.
     #[arg(short = 'w', long, default_value = "4")]
     num_workers: usize,
+
+    /// Path to the tags overlap resolution log file.
+    #[arg(short = 'l', long, default_value = "tag_overlap.log")]
+    overlap_log: std::path::PathBuf,
 }
 
 fn main() -> std::io::Result<()> {
@@ -49,6 +53,7 @@ fn main() -> std::io::Result<()> {
         tags,
         args.num_workers,
         args.batch_size,
+        args.overlap_log,
     )?;
 
     Ok(())

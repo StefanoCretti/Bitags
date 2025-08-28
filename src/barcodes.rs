@@ -1,8 +1,11 @@
 //! Single read barcoding functionalities (batching, bitap matching, overlap resolution)
 
+use crate::fastq_io::{Writeable, get_buff_writer};
 use crate::tags::Tag;
 
 use itertools::Itertools;
+use std::io::Write;
+use std::{io, path};
 
 const MAX_TAG_MISM: usize = 2; // Maximum number of mismatches per tag
 const MAX_TAG_HITS: usize = 64; // Maximum number of tags aligned per read
@@ -80,6 +83,33 @@ fn comb_span(aligned_tags: &AlignedTags, subset: &[usize]) -> usize {
     tot_span
 }
 
+/// Remove the tags which do not belong to the best subset and return them
+///
+/// The vector of indices contains the indices of the aligned tags to keep.
+/// It is assumed that indices are sorted in ascending order.
+/// Sorting is also kept for both input and output tags.
+fn pop_not_indexed<'a>(aligned_tags: &mut AlignedTags<'a>, indices: Vec<usize>) -> AlignedTags<'a> {
+    let mut popped_tags = Vec::with_capacity(aligned_tags.len() - indices.len());
+    let mut index_seq = indices.into_iter().peekable();
+
+    let mut read_pos = 0;
+    let mut write_pos = 0;
+    while read_pos < aligned_tags.len() {
+        if index_seq.peek() == Some(&read_pos) {
+            if write_pos != read_pos {
+                aligned_tags.swap(write_pos, read_pos);
+            }
+            write_pos += 1;
+            index_seq.next();
+        }
+        read_pos += 1;
+    }
+
+    // Remove excess elements and collect them
+    popped_tags.extend(aligned_tags.drain(write_pos..));
+    popped_tags
+}
+
 /// Ensure that the barcode does not contain overlaps.
 ///
 /// The problem is defined as finding the maximal non-overlapping set of spans.
@@ -88,13 +118,13 @@ fn comb_span(aligned_tags: &AlignedTags, subset: &[usize]) -> usize {
 /// read start.
 ///
 /// NOTE: assumes that tags are sorted by alignment start position.
-fn remove_overlaps(aligned_tags: &mut AlignedTags) {
+fn remove_overlaps<'a>(aligned_tags: &mut AlignedTags<'a>) -> AlignedTags<'a> {
     // NOTE: Dynamic programming approach is technically algorithmically better
     // but it saves a negligible amount of time, so sticking to this for clarity.
 
     let num_tags: usize = aligned_tags.len();
     if num_tags == 0 {
-        return; // Empty barcode
+        return Vec::with_capacity(0);
     }
 
     let mut num_removed: usize = 0;
@@ -118,25 +148,32 @@ fn remove_overlaps(aligned_tags: &mut AlignedTags) {
         num_removed += 1;
     }
 
-    // TODO: Need to add logging for debugging purposes
+    // Actually remove overlapping tags and return them for logging purposes
+    pop_not_indexed(aligned_tags, best_comb)
+}
 
-    *aligned_tags = best_comb.iter().map(|&i| aligned_tags[i]).collect()
+/// Utility function to convert a collection of aligned tags to a loggable string.
+fn tags_to_string(aligned_tags: &AlignedTags) -> String {
+    aligned_tags
+        .iter()
+        .map(|(pos, tag)| format!("[{}:{}]", tag.get_name(), pos))
+        .collect()
 }
 
 /// Reusable struct to find tags in a read sequence.
-///
-/// TODO: Add some stats for diagnostic purposes (num barcoded, overlaps...)
 pub struct BarcodeBuilder<'a> {
     tags: &'a Vec<Tag>,
     hits: Vec<(usize, &'a Tag)>,
+    logs: io::BufWriter<Writeable>,
 }
 
 impl<'a> BarcodeBuilder<'a> {
     /// Initialize a new instance of the struct from a vector of tags.
-    pub fn new(tags: &'a Vec<Tag>) -> Self {
+    pub fn new(tags: &'a Vec<Tag>, logs_file: path::PathBuf) -> Self {
         Self {
             tags,
             hits: Vec::with_capacity(MAX_TAG_HITS),
+            logs: get_buff_writer(logs_file, true).unwrap(),
         }
     }
 
@@ -145,6 +182,7 @@ impl<'a> BarcodeBuilder<'a> {
         self.hits.clear();
         let seq_len = seq.len();
 
+        // Find all matching tags
         for tag in self.tags.iter() {
             let mut start_pos: usize = 0;
             while start_pos + tag.len <= seq_len {
@@ -161,7 +199,16 @@ impl<'a> BarcodeBuilder<'a> {
 
         // Sanitize the barcode
         self.hits.sort_by_key(|(pos, _)| *pos);
-        remove_overlaps(&mut self.hits);
+        let removed_tags = remove_overlaps(&mut self.hits);
+        if !removed_tags.is_empty() {
+            writeln!(
+                self.logs,
+                "{}\t{}",
+                tags_to_string(&self.hits),
+                tags_to_string(&removed_tags)
+            )
+            .unwrap();
+        }
 
         return &self.hits;
     }

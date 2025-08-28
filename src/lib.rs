@@ -77,15 +77,16 @@ fn spawn_worker(
     result_tx: Sender<(usize, Result<(), io::Error>)>,
     tags_vec: Vec<Tag>,
     out_dir: path::PathBuf,
+    log_dir: path::PathBuf,
     progress_bar: Arc<ProgressBar>,
 ) -> thread::JoinHandle<()> {
     let tags_vec = tags_vec.clone(); // Almost zero cost and avoids lifetimes
 
     thread::spawn(move || {
         while let Ok((chunk_index, batch)) = chunk_rx.recv() {
-            let builder = BarcodeBuilder::new(&tags_vec);
             let chunk_name = format!("chunk_{:0NUM_PAD_ZEROS$}.fq.gz", chunk_index);
-            let file_writer = match fastq_writer(out_dir.join(chunk_name)) {
+            let builder = BarcodeBuilder::new(&tags_vec, log_dir.join(&chunk_name));
+            let file_writer = match fastq_writer(out_dir.join(&chunk_name)) {
                 Ok(writer) => writer,
                 Err(e) => {
                     eprintln!(
@@ -149,9 +150,11 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
     bitap_tags: Vec<Tag>,
     num_workers: usize,
     batch_size: usize,
+    overlap_log: P,
 ) -> io::Result<()> {
     // Tmp storage for the generated chunks
     let chunks_dir: TempDir = tempdir().unwrap();
+    let logs_dir: TempDir = tempdir().unwrap();
 
     // Create channels for thread communication
     let (data_tx, data_rx) = bounded::<(usize, Vec<fastq::Record>)>(num_workers);
@@ -175,6 +178,7 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
             done_tx.clone(),
             bitap_tags.clone(),
             chunks_dir.path().to_path_buf(),
+            logs_dir.path().to_path_buf(),
             Arc::clone(&progress_bar),
         );
         worker_handles.push(worker);
@@ -228,6 +232,7 @@ pub fn barcode_reads<P: AsRef<path::Path>>(
 
     println!("Merging chunks...");
     concat_files(chunks_dir, new_fastq)?;
+    concat_files(logs_dir, overlap_log)?;
     println!("Done merging chunks.");
 
     Ok(())
