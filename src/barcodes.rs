@@ -156,8 +156,8 @@ fn remove_overlaps<'a>(aligned_tags: &mut AlignedTags<'a>) -> AlignedTags<'a> {
 fn tags_to_string(aligned_tags: &AlignedTags) -> String {
     aligned_tags
         .iter()
-        .map(|(pos, tag)| format!("[{}:{}]", tag.get_name(), pos))
-        .collect()
+        .map(|(pos, tag)| format!("{}:{}:{}", tag.get_seq(), tag.get_info(), pos))
+        .join("|")
 }
 
 /// Reusable struct to find tags in a read sequence.

@@ -18,13 +18,13 @@ struct Cli {
     #[arg(short = 't', long = "tags")]
     tags_file: std::path::PathBuf,
 
-    /// Index (0-based) of the column containing tag names.
-    #[arg(short = 'n', long = "tags-name-pos", default_value = "1")]
-    name_pos: usize,
-
     /// Index (0-based) of the column containing tag sequences.
     #[arg(short = 's', long = "tags-seq-pos", default_value = "2")]
     seq_pos: usize,
+
+    /// Index (0-based) of the column containing tag info.
+    #[arg(short = 'i', long = "tags-info-pos", default_value = "0")]
+    info_pos: usize,
 
     /// Index (0-based) of the column containing the number of allowed mismatches per tag.
     #[arg(short = 'm', long = "tags-mism-pos", default_value = "3")]
@@ -45,7 +45,7 @@ struct Cli {
 
 fn main() -> std::io::Result<()> {
     let args = Cli::parse();
-    let tags = bitags::get_bitap_tags(args.tags_file, args.name_pos, args.seq_pos, args.mism_pos);
+    let tags = bitags::get_bitap_tags(args.tags_file, args.info_pos, args.seq_pos, args.mism_pos);
 
     bitags::barcode_reads(
         args.raw_fastq,

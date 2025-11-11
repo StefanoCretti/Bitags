@@ -1,6 +1,7 @@
 //! Functionalities to create tag objects for bitap pattern matching.
 
-const MAX_TAG_NAME_LEN: usize = 64;
+const MAX_TAG_LEN: usize = 16;
+const MAX_INFO_LEN: usize = 16;
 
 /// Fixed size container for the bitap patterns of DNA bases.
 ///
@@ -70,34 +71,41 @@ impl BitapPatterns {
 /// and the maximum number of allowed mismatches for alignment purposes.
 #[derive(Clone)]
 pub struct Tag {
-    name_arr: [u8; MAX_TAG_NAME_LEN],
-    name_len: usize,
+    seq_arr: [u8; MAX_TAG_LEN],
+    info_arr: [u8; MAX_INFO_LEN],
     pub len: usize,
     pub max_mism: usize,
     pub patterns: BitapPatterns,
 }
 
 impl Tag {
-    pub fn new(name: &str, seq: &str, max_mism: usize) -> Self {
-        let mut name_arr = [0u8; MAX_TAG_NAME_LEN];
-        let name_byt = name.as_bytes();
-        let name_len = name_byt.len().min(MAX_TAG_NAME_LEN);
-        let len = seq.bytes().len();
+    pub fn new(seq: &str, info: &str, max_mism: usize) -> Self {
+        let seq_len = seq.bytes().len();
+        let mut seq_arr = [0u8; MAX_TAG_LEN];
+        seq_arr[..seq_len].copy_from_slice(&seq.as_bytes()[..seq_len]);
+
+        let info_len = info.bytes().len();
+        let mut info_arr = [0u8; MAX_INFO_LEN];
+        info_arr[..info_len].copy_from_slice(&info.as_bytes()[..info_len]);
+
         let patterns = BitapPatterns::new(&seq);
 
-        name_arr[..name_len].copy_from_slice(&name_byt[..name_len]);
-
         return Tag {
-            name_arr,
-            name_len,
-            len,
+            seq_arr,
+            info_arr,
+            len: seq_len,
             max_mism,
             patterns,
         };
     }
 
-    /// Return tag name in string form.
-    pub fn get_name(&self) -> &str {
-        std::str::from_utf8(&self.name_arr[..self.name_len]).unwrap()
+    /// Return tag sequence in string form.
+    pub fn get_seq(&self) -> &str {
+        std::str::from_utf8(&self.seq_arr[..self.len]).unwrap()
+    }
+
+    /// Return tag info in string form
+    pub fn get_info(&self) -> &str {
+        std::str::from_utf8(&self.info_arr).unwrap()
     }
 }

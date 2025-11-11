@@ -8,6 +8,7 @@ use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 use indicatif::{ProgressBar, ProgressStyle};
 use noodles::fastq;
 
+use itertools::Itertools;
 use std::{fs, io, path, sync::Arc, thread};
 use tempfile::{TempDir, tempdir};
 
@@ -23,7 +24,7 @@ const NUM_PAD_ZEROS: usize = 6;
 /// Load all tags present in a tags db file as bitap tags in a single vector.
 pub fn get_bitap_tags<P: AsRef<path::Path>>(
     tags_file: P,
-    name_pos: usize,
+    info_pos: usize,
     seq_pos: usize,
     mism_pos: usize,
 ) -> Vec<Tag> {
@@ -34,8 +35,8 @@ pub fn get_bitap_tags<P: AsRef<path::Path>>(
         .map(|x| x.split("\t").collect::<Vec<&str>>())
         .map(|x| {
             Tag::new(
-                x[name_pos],
                 x[seq_pos],
+                x[info_pos],
                 x[mism_pos].parse::<usize>().unwrap(),
             )
         })
@@ -54,9 +55,8 @@ fn barcode_batch(
         read.description_mut().extend_from_slice(b"::");
         read.description_mut().extend(
             hits.into_iter()
-                .map(|(pos, tag)| format!("[{}:{}]", pos, tag.get_name()))
-                .collect::<Vec<String>>()
-                .join("")
+                .map(|(pos, tag)| format!("{}:{}:{}", tag.get_seq(), tag.get_info(), pos))
+                .join("|")
                 .into_bytes(),
         );
 
