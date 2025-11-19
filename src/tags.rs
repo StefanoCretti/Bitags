@@ -73,6 +73,7 @@ impl BitapPatterns {
 pub struct Tag {
     seq_arr: [u8; MAX_TAG_LEN],
     info_arr: [u8; MAX_INFO_LEN],
+    info_len: usize,
     pub len: usize,
     pub max_mism: usize,
     pub patterns: BitapPatterns,
@@ -93,6 +94,7 @@ impl Tag {
         return Tag {
             seq_arr,
             info_arr,
+            info_len,
             len: seq_len,
             max_mism,
             patterns,
@@ -106,6 +108,6 @@ impl Tag {
 
     /// Return tag info in string form
     pub fn get_info(&self) -> &str {
-        std::str::from_utf8(&self.info_arr).unwrap()
+        std::str::from_utf8(&self.info_arr[..self.info_len]).unwrap()
     }
 }
