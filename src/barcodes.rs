@@ -18,8 +18,8 @@ type AlignedTags<'a> = Vec<(usize, &'a Tag)>;
 fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<usize> {
     // Setup initial arrays (1 for exact match, 1 for each allowed mismatch).
     // NOTE: this allocation seems to be trivial speed-wise.
-    let mut state: [u32; MAX_TAG_MISM + 1] = [!1u32; MAX_TAG_MISM + 1];
-    let match_mask: u32 = 1u32 << tag.len;
+    let mut state: [u64; MAX_TAG_MISM + 1] = [!1u64; MAX_TAG_MISM + 1];
+    let match_mask: u64 = 1u64 << tag.len;
 
     for (i, base) in sequence.iter().enumerate() {
         let mut old_state = state[0];

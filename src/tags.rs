@@ -1,12 +1,12 @@
 //! Functionalities to create tag objects for bitap pattern matching.
 
-const MAX_TAG_LEN: usize = 32;
+const MAX_TAG_LEN: usize = 64;
 const MAX_INFO_LEN: usize = 32;
 
 /// Fixed size container for the bitap patterns of DNA bases.
 ///
 /// Creates and stores the bitap pattern for each DNA base (A, C, T, G).
-/// The bitap pattern for a letter is a u32 with all 1s except in the
+/// The bitap pattern for a letter is a u64 with all 1s except in the
 /// positions where the letter is found in the sequence.
 ///
 /// As an example, the sequence "ACAG" will yield the following patterns:
@@ -23,25 +23,25 @@ const MAX_INFO_LEN: usize = 32;
 ///   the other pattern logic.
 ///
 /// Notes:
-/// - Due to the usage of u32, max pattern length allowed is 32 characters.
+/// - Due to the usage of u64, max pattern length allowed is 63 characters.
 #[derive(Clone)]
 pub struct BitapPatterns {
-    a: u32,
-    c: u32,
-    t: u32,
-    g: u32,
+    a: u64,
+    c: u64,
+    t: u64,
+    g: u64,
 }
 
 impl BitapPatterns {
     pub fn new(sequence: &str) -> Self {
         let mut new_self = Self {
-            a: !0u32,
-            c: !0u32,
-            t: !0u32,
-            g: !0u32,
+            a: !0u64,
+            c: !0u64,
+            t: !0u64,
+            g: !0u64,
         };
         for (i, b) in sequence.bytes().enumerate() {
-            let mask = !(1u32 << i);
+            let mask = !(1u64 << i);
             match b {
                 b'A' => new_self.a &= mask,
                 b'C' => new_self.c &= mask,
@@ -53,13 +53,13 @@ impl BitapPatterns {
         }
         return new_self;
     }
-    pub fn get(&self, base: &u8) -> &u32 {
+    pub fn get(&self, base: &u8) -> &u64 {
         match base {
             b'A' => &self.a,
             b'C' => &self.c,
             b'T' => &self.t,
             b'G' => &self.g,
-            b'N' => &!0u32, // Will always be a mismatch
+            b'N' => &!0u64, // Will always be a mismatch
             _ => panic!("Invalid base: {base}"),
         }
     }
