@@ -1,2 +1,9 @@
+# Build files
 target
 Cargo.lock
+
+# Testing files
+test_tool.sh
+
+# Local files
+.DS_Store
