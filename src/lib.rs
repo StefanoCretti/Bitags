@@ -6,9 +6,8 @@ mod tags;
 
 use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 use indicatif::{ProgressBar, ProgressStyle};
-use noodles::fastq;
-
 use itertools::Itertools;
+use noodles::fastq;
 use std::{fs, io, path, sync::Arc, thread};
 use tempfile::{TempDir, tempdir};
 
@@ -53,11 +52,24 @@ fn barcode_batch(
         let hits = builder.get_barcode(read.sequence());
 
         read.description_mut().extend_from_slice(b"::");
+        let (seqs, infos, positions): (Vec<_>, Vec<_>, Vec<_>) = hits
+            .into_iter()
+            .map(|(pos, tag)| {
+                (
+                    tag.get_seq().to_owned(),
+                    tag.get_info().to_owned(),
+                    pos.to_string(),
+                )
+            })
+            .multiunzip();
         read.description_mut().extend(
-            hits.into_iter()
-                .map(|(pos, tag)| format!("{}:{}:{}", tag.get_seq(), tag.get_info(), pos))
-                .join("|")
-                .into_bytes(),
+            format!(
+                "{}|{}|{}",
+                seqs.join(":"),
+                infos.join(":"),
+                positions.join(":")
+            )
+            .into_bytes(),
         );
 
         file_writer.write_record(&read).unwrap();
