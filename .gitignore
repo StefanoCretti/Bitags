@@ -1,6 +1,7 @@
 # Build files
 target
 Cargo.lock
+*__pycache__
 
 # Testing files
 test_tool.sh

@@ -11,7 +11,7 @@ def load_regexes(file: str) -> Mapping[str, str]:
         mapping = json.load(handle)
 
     assert all(isinstance(k, str) for k in mapping.keys())
-    assert all(isinstance(v, str) for v in mapping.keys())
+    assert all(isinstance(v, str) for v in mapping.values())
 
     return mapping
 
