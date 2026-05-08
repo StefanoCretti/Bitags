@@ -5,6 +5,7 @@ from rich.console import Console
 
 from bitags._typing import MoleculeType, ReadType
 from bitags.classification import classify_reads, split
+from bitags.read_io import scan_fastq, sink_fastq
 from bitags.patterns import r1_trim_regex, r2_barcode_regex, r2_regex, r2_trim_regex
 from bitags.trimming import extract_barcode, trim_reads
 from bitags.viz import render_read_pair
@@ -115,3 +116,21 @@ def visualize(
             raise ValueError(f"Unsupported format '.{ext}'. Use .html or .svg")
         with open(out, "w") as f:
             f.write(content)
+
+
+def fastq_to_parquet(r1: str, r2: str | None = None, *, out: str) -> None:
+    """Convert single or paired fastq.gz files to a parquet file.
+
+    Columns are suffixed with '_r1' (and '_r2' for paired reads).
+    The operation is streamed without collecting in memory.
+    """
+    scan_fastq(r1, r2).sink_parquet(out)
+
+
+def parquet_to_fastq(src: str, *, r1: str, r2: str | None = None) -> None:
+    """Convert a parquet file back to fastq.gz files.
+
+    Expects columns suffixed with '_r1' (and '_r2' for paired reads).
+    Raises if the parquet contains _r2 columns but no r2 path is provided.
+    """
+    sink_fastq(pl.scan_parquet(src), r1=r1, r2=r2)
