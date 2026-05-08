@@ -1,6 +1,5 @@
 import io
 import json
-from typing import Mapping
 
 import polars as pl
 from rich.console import Console
@@ -12,6 +11,16 @@ from bitags.manipulation import embed_barcode, to_unpaired
 from bitags.read_io import scan_fastq, sink_fastq
 from bitags.trimming import trim_reads
 from bitags.viz import render_read_pair
+
+__all__ = [
+    "barcode",
+    "embed",
+    "fastq_to_parquet",
+    "parquet_to_fastq",
+    "split",
+    "trim",
+    "visualize",
+]
 
 
 def visualize(
@@ -89,19 +98,9 @@ def split(src: str, out_dir: str, *, regex_json: str, read: ReadType = "r1") -> 
     Output: hive-partitioned parquet under out_dir (category=DNA/, category=RNA/, ...).
     """
 
-    def load_regexes(file: str) -> Mapping[str, str]:
-        """Load regexes from a json file."""
-
-        with open(file, "r") as handle:
-            mapping = json.load(handle)
-
-        assert all(isinstance(k, str) for k in mapping.keys())
-        assert all(isinstance(v, str) for v in mapping.values())
-
-        return mapping
-
-    regexes = load_regexes(regex_json)
     split_col = f"tag_type_{read}"
+    with open(src, "r") as handle:
+        regexes = json.load(handle)
 
     (
         pl.scan_parquet(src)
