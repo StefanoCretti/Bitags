@@ -5,8 +5,9 @@ from rich.console import Console
 
 from bitags._typing import MoleculeType, ReadType
 from bitags.classification import classify_reads, split
-from bitags.read_io import scan_fastq, sink_fastq
 from bitags.patterns import r1_trim_regex, r2_barcode_regex, r2_regex, r2_trim_regex
+from bitags.read_io import scan_fastq, sink_fastq
+from bitags.barcoding import barcode_reads
 from bitags.trimming import extract_barcode, trim_reads
 from bitags.viz import render_read_pair
 
@@ -134,3 +135,21 @@ def parquet_to_fastq(src: str, *, r1: str, r2: str | None = None) -> None:
     Raises if the parquet contains _r2 columns but no r2 path is provided.
     """
     sink_fastq(pl.scan_parquet(src), r1=r1, r2=r2)
+
+
+def barcode(src: str, out: str, *, tags: str, read: ReadType | None = None) -> None:
+    """Apply bitap tag matching to reads in a parquet file and write the result.
+
+    Loads tags from a TSV file (columns: seq, info, max_mism) and runs fuzzy
+    matching against the sequence columns. If read is given, only that read is
+    barcoded; otherwise both r1 and r2 are processed.
+    """
+
+    read_types = (read,) if isinstance(read, str) else ("r1", "r2")
+    tags_df = pl.read_csv(tags, separator="\t", comment_prefix="#")
+
+    lf = pl.scan_parquet(src)
+    for rt in read_types:
+        lf = barcode_reads(lf, tags_df, read=rt)
+
+    lf.sink_parquet(out)
