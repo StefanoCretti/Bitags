@@ -129,3 +129,24 @@ def trim(
         trim_reads, regex=regex, read=read, tags_only=tags_only
     ).sink_parquet(out)
 
+
+def embed(
+    src: str,
+    out: str,
+    *,
+    source_read: ReadType,
+    target_read: ReadType,
+    separator: str = "::",
+    remove_source: bool = True,
+) -> None:
+    """Embed the barcode from source_read into the read name of target_read.
+
+    The barcode (tag_seq_{source_read}) is appended to name_{target_read} using
+    separator. If remove_source=True, all source_read columns are dropped; if the
+    source was r1, the remaining r2 columns are renamed to r1 so the output is
+    treated as unpaired.
+    """
+    lf = embed_barcode(pl.scan_parquet(src), source_read, target_read, separator)
+    if remove_source:
+        lf = to_unpaired(lf, source_read)
+    lf.sink_parquet(out)
