@@ -1,8 +1,6 @@
-import io
 import json
 
 import polars as pl
-from rich.console import Console
 
 from bitags._typing import ReadType
 from bitags.barcoding import barcode_reads
@@ -10,7 +8,7 @@ from bitags.classification import classify_reads
 from bitags.manipulation import embed_barcode, to_unpaired
 from bitags.read_io import scan_fastq, sink_fastq
 from bitags.trimming import trim_reads
-from bitags.viz import render_read_pair
+from bitags.visualization import render_reads
 
 __all__ = [
     "barcode",
@@ -21,38 +19,6 @@ __all__ = [
     "trim",
     "visualize",
 ]
-
-
-def visualize(
-    src: str,
-    *,
-    n: int = 10,
-    color_map: dict[str, str] | None = None,
-    out: str | None = None,
-) -> None:
-    """Display n reads from src with tag regions highlighted by type.
-
-    If out is provided, saves to file instead of printing to terminal.
-    Supported formats: .html, .svg (inferred from extension).
-    """
-
-    console = Console(record=True, file=io.StringIO()) if out else Console()
-
-    rows = pl.scan_parquet(src).head(n).collect().to_dicts()
-    for row in rows:
-        render_read_pair(row, console=console, color_map=color_map)
-        console.rule()
-
-    if out:
-        ext = out.rsplit(".", 1)[-1].lower()
-        if ext == "html":
-            content = console.export_html()
-        elif ext == "svg":
-            content = console.export_svg()
-        else:
-            raise ValueError(f"Unsupported format '.{ext}'. Use .html or .svg")
-        with open(out, "w") as f:
-            f.write(content)
 
 
 def fastq_to_parquet(r1: str, r2: str | None = None, *, out: str) -> None:
@@ -149,3 +115,23 @@ def embed(
     if remove_source:
         lf = to_unpaired(lf, source_read)
     lf.sink_parquet(out)
+
+
+def visualize(
+    src: str,
+    *,
+    n: int = 10,
+    color_map: str | None = None,
+    out: str | None = None,
+) -> None:
+    """Display n reads from src with tag regions highlighted by type.
+
+    If color_map is provided, it must be a path to a JSON file mapping tag type
+    names to hex color strings (e.g. {"Adap_l": "#555555"}). If omitted, a
+    divergent palette is generated automatically from the tag types in the data.
+    If out is provided, saves to file instead of printing to terminal.
+    Supported formats: .html, .svg (inferred from extension).
+    """
+    with open(src, "r") as handle:
+        cmap = json.load(handle)
+    pl.scan_parquet(src).pipe(render_reads, num_rows=n, color_map=cmap, out=out)
