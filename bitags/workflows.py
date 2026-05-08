@@ -65,7 +65,7 @@ def split(src: str, out_dir: str, *, regex_json: str, read: ReadType = "r1") -> 
     """
 
     split_col = f"tag_type_{read}"
-    with open(src, "r") as handle:
+    with open(regex_json, "r") as handle:
         regexes = json.load(handle)
 
     (
@@ -132,6 +132,10 @@ def visualize(
     If out is provided, saves to file instead of printing to terminal.
     Supported formats: .html, .svg (inferred from extension).
     """
-    with open(src, "r") as handle:
-        cmap = json.load(handle)
+    if not color_map:
+        cmap = None
+    else:
+        with open(color_map, "r") as handle:
+            cmap = json.load(handle)
+
     pl.scan_parquet(src).pipe(render_reads, num_rows=n, color_map=cmap, out=out)
