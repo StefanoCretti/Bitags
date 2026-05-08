@@ -1,29 +1,13 @@
-//! Functionalities to create tag objects for bitap pattern matching.
+//! Tag objects for bitap pattern matching — ported from bitags.
 
 const MAX_TAG_LEN: usize = 64;
 const MAX_INFO_LEN: usize = 32;
 
-/// Fixed size container for the bitap patterns of DNA bases.
+/// Fixed-size bitap pattern container for the four DNA bases.
 ///
-/// Creates and stores the bitap pattern for each DNA base (A, C, T, G).
-/// The bitap pattern for a letter is a u64 with all 1s except in the
-/// positions where the letter is found in the sequence.
-///
-/// As an example, the sequence "ACAG" will yield the following patterns:
-/// - "A" -> 0b1111111111110101
-/// - "C" -> 0b1111111111111011
-/// - "G" -> 0b1111111111111110
-///
-/// This is definitely not the most elegant or flexible approach but:
-/// - Hashmaps are too slow due to collision checking
-/// - Positional arrays are not very readable plus the characters of the
-///   bases are not contiguous in ASCII, which is annoying for indexing.
-/// - This has fixed size so it is on the stack and thus can be copied/cloned.
-/// - Allows to handle corner cases (e.g. N) in the same place as all
-///   the other pattern logic.
-///
-/// Notes:
-/// - Due to the usage of u64, max pattern length allowed is 63 characters.
+/// Each field holds a u64 bitmask where bit i is 0 if the corresponding base
+/// appears at position i in the tag sequence, and 1 otherwise.
+/// Fixed size keeps the struct on the stack and avoids hash-map overhead.
 #[derive(Clone)]
 pub struct BitapPatterns {
     a: u64,
@@ -34,12 +18,7 @@ pub struct BitapPatterns {
 
 impl BitapPatterns {
     pub fn new(sequence: &str) -> Self {
-        let mut new_self = Self {
-            a: !0u64,
-            c: !0u64,
-            t: !0u64,
-            g: !0u64,
-        };
+        let mut new_self = Self { a: !0u64, c: !0u64, t: !0u64, g: !0u64 };
         for (i, b) in sequence.bytes().enumerate() {
             let mask = !(1u64 << i);
             match b {
@@ -47,28 +26,26 @@ impl BitapPatterns {
                 b'C' => new_self.c &= mask,
                 b'T' => new_self.t &= mask,
                 b'G' => new_self.g &= mask,
-                b'N' => {} // Will always be a mismatch but allowed
+                b'N' => {}
                 _ => panic!("Invalid base: {b}"),
             }
         }
-        return new_self;
+        new_self
     }
+
     pub fn get(&self, base: &u8) -> &u64 {
         match base {
             b'A' => &self.a,
             b'C' => &self.c,
             b'T' => &self.t,
             b'G' => &self.g,
-            b'N' => &!0u64, // Will always be a mismatch
+            b'N' => &!0u64,
             _ => panic!("Invalid base: {base}"),
         }
     }
 }
 
-/// Searcheable tag via bitap algorithm
-///
-/// Tag which was obtained from a tag db file. Stores the bitap patterns
-/// and the maximum number of allowed mismatches for alignment purposes.
+/// Tag with precomputed bitap patterns for fuzzy matching.
 #[derive(Clone)]
 pub struct Tag {
     seq_arr: [u8; MAX_TAG_LEN],
@@ -81,32 +58,28 @@ pub struct Tag {
 
 impl Tag {
     pub fn new(seq: &str, info: &str, max_mism: usize) -> Self {
-        let seq_len = seq.bytes().len();
+        let seq_len = seq.len();
         let mut seq_arr = [0u8; MAX_TAG_LEN];
-        seq_arr[..seq_len].copy_from_slice(&seq.as_bytes()[..seq_len]);
+        seq_arr[..seq_len].copy_from_slice(seq.as_bytes());
 
-        let info_len = info.bytes().len();
+        let info_len = info.len();
         let mut info_arr = [0u8; MAX_INFO_LEN];
-        info_arr[..info_len].copy_from_slice(&info.as_bytes()[..info_len]);
+        info_arr[..info_len].copy_from_slice(info.as_bytes());
 
-        let patterns = BitapPatterns::new(&seq);
-
-        return Tag {
+        Tag {
             seq_arr,
             info_arr,
             info_len,
             len: seq_len,
             max_mism,
-            patterns,
-        };
+            patterns: BitapPatterns::new(seq),
+        }
     }
 
-    /// Return tag sequence in string form.
     pub fn get_seq(&self) -> &str {
         std::str::from_utf8(&self.seq_arr[..self.len]).unwrap()
     }
 
-    /// Return tag info in string form
     pub fn get_info(&self) -> &str {
         std::str::from_utf8(&self.info_arr[..self.info_len]).unwrap()
     }

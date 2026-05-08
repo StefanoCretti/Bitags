@@ -1,17 +1,63 @@
-//! Overlap resolution for aligned barcoding tags.
+//! Bitap fuzzy matching and overlap resolution
 
-use super::{AlignedTags, MAX_TAG_HITS};
+use crate::tags::Tag;
 
-/// Move tags not in `indices` from `aligned_tags` into `removed`.
+const MAX_TAG_MISM: usize = 2;
+
+type AlignedTags<'a> = Vec<(usize, &'a Tag)>;
+
+/// Look for a tag in a DNA/cDNA read using the bitap algorithm.
 ///
-/// `indices` must be sorted ascending. `removed` is cleared before filling.
-/// Discared tags are not guaranteed to be sorted by alignement position.
-fn pop_not_indexed<'a>(
-    aligned_tags: &mut AlignedTags<'a>,
-    indices: &[usize],
-    removed: &mut AlignedTags<'a>,
-) {
-    removed.clear();
+/// NOTE: Currently tag length must be 63 bp or lower.
+fn match_pattern(sequence: &[u8], tag: &Tag) -> Option<usize> {
+    let mut state: [u64; MAX_TAG_MISM + 1] = [!1u64; MAX_TAG_MISM + 1];
+    let match_mask: u64 = 1u64 << tag.len;
+
+    for (i, base) in sequence.iter().enumerate() {
+        let mut old_state = state[0];
+        let base_patt = tag.patterns.get(base);
+        state[0] |= base_patt;
+        state[0] <<= 1u8;
+        // Loop unrolling cuts time in half at the cost of readability.
+        match tag.max_mism {
+            0 => {
+                if (state[0] & match_mask) == 0 {
+                    return Some(1 + i - tag.len);
+                }
+            }
+            1 => {
+                state[1] = (old_state & (state[1] | base_patt)) << 1;
+                if (state[1] & match_mask) == 0 {
+                    return Some(1 + i - tag.len);
+                }
+            }
+            2 => {
+                let tmp_state = state[1];
+                state[1] = (old_state & (state[1] | base_patt)) << 1;
+                state[2] = (tmp_state & (state[2] | base_patt)) << 1;
+                if (state[2] & match_mask) == 0 {
+                    return Some(1 + i - tag.len);
+                }
+            }
+            _ => {
+                for m in 1..=tag.max_mism {
+                    let tmp_state = state[m];
+                    state[m] = (old_state & (state[m] | base_patt)) << 1;
+                    old_state = tmp_state;
+                }
+                if (state[tag.max_mism] & match_mask) == 0 {
+                    return Some(1 + i - tag.len);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Retain only the entries at `indices` in `aligned_tags`, discarding the rest.
+///
+/// `indices` must be sorted ascending.
+fn pop_not_indexed<'a>(aligned_tags: &mut AlignedTags<'a>, indices: &[usize]) {
     let mut index_seq = indices.iter().peekable();
     let mut write_pos = 0;
     for read_pos in 0..aligned_tags.len() {
@@ -23,7 +69,7 @@ fn pop_not_indexed<'a>(
             index_seq.next();
         }
     }
-    removed.extend(aligned_tags.drain(write_pos..));
+    aligned_tags.truncate(write_pos);
 }
 
 /// Ensure the barcode has no overlapping tags, using three phases:
@@ -38,19 +84,10 @@ fn pop_not_indexed<'a>(
 /// **Phase 3 — greedy forward pass**: iterate tags in start order; include
 /// the earliest compatible tag that keeps the remaining optimum reachable.
 /// This greedy choice yields the lexicographically smallest start-position
-/// sequence among all solutions with the same `(span, count)` — i.e. at the
-/// first position where two solutions differ, pick the tag with the smaller
-/// start.
-///
-/// All buffers are stack-allocated (no heap allocation).
-/// Removed tags are written into `removed` (cleared before use).
+/// sequence among all solutions with the same `(span, count)`.
 ///
 /// Requires `aligned_tags` sorted by start position on entry.
-pub(super) fn remove_overlaps<'a>(
-    aligned_tags: &mut AlignedTags<'a>,
-    removed: &mut AlignedTags<'a>,
-) {
-    removed.clear();
+fn remove_overlaps(aligned_tags: &mut AlignedTags) {
     let num_tags = aligned_tags.len();
     if num_tags == 0 {
         return;
@@ -67,8 +104,7 @@ pub(super) fn remove_overlaps<'a>(
     // --- Phase 1: nxt[i] ---
     // nxt[i] = first index j > i such that tags[j].start >= tags[i].end,
     //          or num_tags if no such tag exists.
-    let mut nxt_buf = [0usize; MAX_TAG_HITS];
-    let nxt = &mut nxt_buf[..num_tags];
+    let mut nxt = vec![0usize; num_tags];
     for i in 0..num_tags {
         let end_i = aligned_tags[i].0 + aligned_tags[i].1.len;
         let mut lo = i + 1;
@@ -87,8 +123,7 @@ pub(super) fn remove_overlaps<'a>(
     // --- Phase 2: suffix DP ---
     // sdp[i] = (span, count): best achievable from tags[i..] in start order.
     // sdp[num_tags] = (0, 0) by initialisation.
-    let mut sdp_buf = [(0usize, 0usize); MAX_TAG_HITS + 1];
-    let sdp = &mut sdp_buf[..num_tags + 1];
+    let mut sdp = vec![(0usize, 0usize); num_tags + 1];
     for i in (0..num_tags).rev() {
         let tag_len = aligned_tags[i].1.len;
         let skip = sdp[i + 1];
@@ -106,8 +141,7 @@ pub(super) fn remove_overlaps<'a>(
     // remaining (span, count) target reachable.
     let (mut rem_span, mut rem_count) = sdp[0];
     let mut pos = 0usize;
-    let mut sel_buf = [0usize; MAX_TAG_HITS];
-    let mut sel_len = 0usize;
+    let mut sel: Vec<usize> = Vec::new();
 
     for i in 0..num_tags {
         if rem_count == 0 {
@@ -119,24 +153,159 @@ pub(super) fn remove_overlaps<'a>(
         }
         let (after_span, after_count) = sdp[nxt[i]];
         if after_span + tag.len == rem_span && after_count + 1 == rem_count {
-            sel_buf[sel_len] = i;
-            sel_len += 1;
+            sel.push(i);
             rem_span -= tag.len;
             rem_count -= 1;
             pos = tag_start + tag.len;
         }
     }
 
-    pop_not_indexed(aligned_tags, &sel_buf[..sel_len], removed);
+    pop_not_indexed(aligned_tags, &sel);
+}
+
+/// Find all tags in `seq`, resolve overlaps, and return the surviving hits sorted by position.
+pub fn find_tags<'a>(seq: &[u8], tags: &'a [Tag]) -> AlignedTags<'a> {
+    let mut hits: AlignedTags = Vec::new();
+    let seq_len = seq.len();
+
+    for tag in tags {
+        let mut start = 0;
+        while start + tag.len <= seq_len {
+            match match_pattern(&seq[start..], tag) {
+                Some(rel_pos) => {
+                    let abs_pos = start + rel_pos;
+                    hits.push((abs_pos, tag));
+                    start = abs_pos + tag.len;
+                }
+                None => break,
+            }
+        }
+    }
+
+    hits.sort_by_key(|(pos, _)| *pos);
+    remove_overlaps(&mut hits);
+    hits
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::{AlignedTags, MAX_TAG_HITS};
-    use super::remove_overlaps;
+mod matching_tests {
+    use super::match_pattern;
     use crate::tags::Tag;
 
-    // ── helpers ──────────────────────────────────────────────────────────────
+    fn make_tag(seq: &str, max_mism: usize) -> Tag {
+        Tag::new(seq, "", max_mism)
+    }
+
+    // ── exact matching (max_mism = 0) ─────────────────────────────────────────
+
+    #[test]
+    fn exact_match_at_start() {
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"ACGTTTTT", &tag), Some(0));
+    }
+
+    #[test]
+    fn exact_match_in_middle() {
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"TTTTACGTTTTT", &tag), Some(4));
+    }
+
+    #[test]
+    fn exact_match_at_end() {
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"TTTTACGT", &tag), Some(4));
+    }
+
+    #[test]
+    fn no_match() {
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"TTTTTTTT", &tag), None);
+    }
+
+    #[test]
+    fn sequence_shorter_than_tag() {
+        let tag = make_tag("ACGTACGT", 0);
+        assert_eq!(match_pattern(b"ACG", &tag), None);
+    }
+
+    #[test]
+    fn returns_first_match() {
+        // tag appears twice; first occurrence is returned
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"ACGTTTACGT", &tag), Some(0));
+    }
+
+    // ── 1-mismatch matching ───────────────────────────────────────────────────
+
+    #[test]
+    fn one_mismatch_found() {
+        // ACGT vs ACTT — 1 mismatch at position 2
+        let tag = make_tag("ACGT", 1);
+        assert_eq!(match_pattern(b"ACTT", &tag), Some(0));
+    }
+
+    #[test]
+    fn one_mismatch_not_allowed() {
+        // max_mism=0, 1 mismatch → no match
+        let tag = make_tag("ACGT", 0);
+        assert_eq!(match_pattern(b"TTACTTTTTT", &tag), None);
+    }
+
+    // ── 2-mismatch matching ───────────────────────────────────────────────────
+
+    #[test]
+    fn two_mismatches_found() {
+        // ACGT vs AATT — 2 mismatches at positions 1 and 2
+        let tag = make_tag("ACGT", 2);
+        assert_eq!(match_pattern(b"AATT", &tag), Some(0));
+    }
+
+    #[test]
+    fn two_mismatches_not_allowed() {
+        // max_mism=1, 2 mismatches → no match
+        let tag = make_tag("ACGT", 1);
+        assert_eq!(match_pattern(b"AATT", &tag), None);
+    }
+
+    // ── N in tag (always a mismatch) ──────────────────────────────────────────
+
+    #[test]
+    fn n_in_tag_counts_as_mismatch() {
+        // ANCG: N always mismatches, so vs AACG there is exactly 1 mismatch
+        let tag = make_tag("ANCG", 1);
+        assert_eq!(match_pattern(b"AACG", &tag), Some(0));
+    }
+
+    #[test]
+    fn n_in_tag_not_allowed() {
+        // N always mismatches; max_mism=0 → no match even if rest is identical
+        let tag = make_tag("ANCG", 0);
+        assert_eq!(match_pattern(b"AACG", &tag), None);
+    }
+
+    // ── Truncated tag at read sides ───────────────────────────────────────────
+
+    #[test]
+    fn truncated_tag_start() {
+        // Since the first base of the tag is truncated, not mismatched, the
+        // algorithm should not find the tag even allowing for a mismatch.
+        let tag = make_tag("AACG", 1);
+        assert_eq!(match_pattern(b"ACGTTTT", &tag), None);
+    }
+
+    #[test]
+    fn truncated_tag_end() {
+        // Since the last base of the tag is truncated, not mismatched, the
+        // algorithm should not find the tag even allowing for a mismatch.
+        let tag = make_tag("AACG", 1);
+        assert_eq!(match_pattern(b"TTTTAAC", &tag), None);
+    }
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::{AlignedTags, remove_overlaps};
+    use crate::tags::Tag;
 
     /// Build a Tag whose sequence is `seq_len` 'A's and whose info is `info`.
     /// max_mism is irrelevant for overlap-removal tests.
@@ -144,14 +313,6 @@ mod tests {
         Tag::new(&"A".repeat(seq_len), info, 0)
     }
 
-    /// Thin wrapper around remove_overlaps for readability.
-    fn resolve<'a>(hits: &mut AlignedTags<'a>) -> AlignedTags<'a> {
-        let mut removed = Vec::with_capacity(MAX_TAG_HITS);
-        remove_overlaps(hits, &mut removed);
-        removed
-    }
-
-    /// Return the info strings of every tag in the slice, in order.
     fn infos<'a>(tags: &'a AlignedTags<'a>) -> Vec<&'a str> {
         tags.iter().map(|(_, t)| t.get_info()).collect()
     }
@@ -161,18 +322,16 @@ mod tests {
     #[test]
     fn no_tags() {
         let mut hits: AlignedTags = vec![];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert!(hits.is_empty());
-        assert!(removed.is_empty());
     }
 
     #[test]
     fn single_tag() {
         let t = make_tag(8, "T1");
         let mut hits: AlignedTags = vec![(0, &t)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1"]);
-        assert!(removed.is_empty());
     }
 
     #[test]
@@ -181,9 +340,8 @@ mod tests {
         let t1 = make_tag(8, "T1");
         let t2 = make_tag(8, "T2");
         let mut hits: AlignedTags = vec![(0, &t1), (8, &t2)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T2"]);
-        assert!(removed.is_empty());
     }
 
     #[test]
@@ -193,9 +351,8 @@ mod tests {
         let t2 = make_tag(5, "T2");
         let t3 = make_tag(5, "T3");
         let mut hits: AlignedTags = vec![(0, &t1), (5, &t2), (10, &t3)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T2", "T3"]);
-        assert!(removed.is_empty());
     }
 
     // ── tiebreak 1: maximum span ──────────────────────────────────────────────
@@ -208,9 +365,8 @@ mod tests {
         let long = make_tag(10, "LONG");
         let mut hits: AlignedTags = vec![(0, &short), (0, &long)];
         hits.sort_by_key(|(pos, _)| *pos);
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["LONG"]);
-        assert_eq!(infos(&removed), ["SHORT"]);
     }
 
     #[test]
@@ -225,9 +381,8 @@ mod tests {
         let c = make_tag(6, "C");
         let mut hits: AlignedTags = vec![(0, &a), (0, &b), (9, &c)];
         hits.sort_by_key(|(pos, _)| *pos);
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["B", "C"]);
-        assert_eq!(infos(&removed), ["A"]);
     }
 
     #[test]
@@ -248,11 +403,8 @@ mod tests {
         let e = make_tag(9, "E");
         let mut hits: AlignedTags = vec![(0, &k1), (0, &c), (10, &d), (15, &k2), (20, &e)];
         hits.sort_by_key(|(pos, _)| *pos);
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["K1", "K2"]);
-        let mut r = infos(&removed);
-        r.sort_unstable();
-        assert_eq!(r, ["C", "D", "E"]);
     }
 
     // ── tiebreak 2: maximum number of tags ────────────────────────────────────
@@ -267,9 +419,8 @@ mod tests {
         let c = make_tag(5, "C");
         let mut hits: AlignedTags = vec![(0, &a), (0, &b), (5, &c)];
         hits.sort_by_key(|(pos, _)| *pos);
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["B", "C"]);
-        assert_eq!(infos(&removed), ["A"]);
     }
 
     #[test]
@@ -290,11 +441,8 @@ mod tests {
         let z = make_tag(10, "Z");
         let mut hits: AlignedTags = vec![(0, &p), (0, &x), (10, &y), (15, &q), (20, &z)];
         hits.sort_by_key(|(pos, _)| *pos);
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["X", "Y", "Z"]);
-        let mut r = infos(&removed);
-        r.sort_unstable();
-        assert_eq!(r, ["P", "Q"]);
     }
 
     // ── tiebreak 3: lexicographic start position ──────────────────────────────
@@ -308,9 +456,8 @@ mod tests {
         let t2 = make_tag(5, "T2");
         let t3 = make_tag(5, "T3");
         let mut hits: AlignedTags = vec![(0, &t1), (5, &t2), (8, &t3)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T2"]);
-        assert_eq!(infos(&removed), ["T3"]);
     }
 
     #[test]
@@ -322,9 +469,8 @@ mod tests {
         let t2 = make_tag(5, "T2");
         let t3 = make_tag(5, "T3");
         let mut hits: AlignedTags = vec![(0, &t1), (3, &t2), (8, &t3)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T3"]);
-        assert_eq!(infos(&removed), ["T2"]);
     }
 
     #[test]
@@ -338,9 +484,8 @@ mod tests {
         let t3 = make_tag(5, "T3");
         let t4 = make_tag(5, "T4");
         let mut hits: AlignedTags = vec![(0, &t1), (5, &t2), (8, &t3), (13, &t4)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T2", "T4"]);
-        assert_eq!(infos(&removed), ["T3"]);
     }
 
     // ── complex cases ─────────────────────────────────────────────────────────
@@ -356,9 +501,8 @@ mod tests {
         let t3 = make_tag(5, "T3");
         let t4 = make_tag(5, "T4");
         let mut hits: AlignedTags = vec![(0, &t1), (3, &t2), (10, &t3), (13, &t4)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["T1", "T3"]);
-        assert_eq!(infos(&removed), ["T2", "T4"]);
     }
 
     #[test]
@@ -373,8 +517,7 @@ mod tests {
         let c = make_tag(10, "C");
         let d = make_tag(10, "D");
         let mut hits: AlignedTags = vec![(0, &a), (8, &b), (16, &c), (24, &d)];
-        let removed = resolve(&mut hits);
+        remove_overlaps(&mut hits);
         assert_eq!(infos(&hits), ["A", "C"]);
-        assert_eq!(infos(&removed), ["B", "D"]);
     }
 }
