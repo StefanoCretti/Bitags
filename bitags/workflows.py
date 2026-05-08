@@ -1,33 +1,17 @@
 import io
+import json
+from typing import Mapping
 
 import polars as pl
 from rich.console import Console
 
 from bitags._typing import MoleculeType, ReadType
-from bitags.classification import classify_reads, split
-from bitags.patterns import r1_trim_regex, r2_barcode_regex, r2_regex, r2_trim_regex
-from bitags.read_io import scan_fastq, sink_fastq
 from bitags.barcoding import barcode_reads
+from bitags.classification import classify_reads
+from bitags.patterns import r1_trim_regex, r2_barcode_regex, r2_trim_regex
+from bitags.read_io import scan_fastq, sink_fastq
 from bitags.trimming import extract_barcode, trim_reads
 from bitags.viz import render_read_pair
-
-
-def split_by_type(src: str, *, schema: str, out_dir: str) -> None:
-    """Classify reads by R2 barcode and write per-category parquet partitions.
-
-    Reads are classified as DNA, RNA, or Other based on the R2 tag_type column.
-    Output: hive-partitioned parquet under out_dir (category=DNA/, category=RNA/, ...).
-    """
-    regexes = {
-        "DNA": r2_regex(schema, "dna"),
-        "RNA": r2_regex(schema, "rna"),
-    }
-
-    (
-        pl.scan_parquet(src)
-        .pipe(classify_reads, regexes, col="tag_type_r2", into="category")
-        .pipe(split, on="category", out_dir=out_dir)
-    )
 
 
 def trim(
@@ -153,3 +137,31 @@ def barcode(src: str, out: str, *, tags: str, read: ReadType | None = None) -> N
         lf = barcode_reads(lf, tags_df, read=rt)
 
     lf.sink_parquet(out)
+
+
+def split(src: str, out_dir: str, *, regex_json: str, read: ReadType = "r1") -> None:
+    """Classify reads by R2 barcode and write per-category parquet partitions.
+
+    Reads are classified as DNA, RNA, or Other based on the R2 tag_type column.
+    Output: hive-partitioned parquet under out_dir (category=DNA/, category=RNA/, ...).
+    """
+
+    def load_regexes(file: str) -> Mapping[str, str]:
+        """Load regexes from a json file."""
+
+        with open(file, "r") as handle:
+            mapping = json.load(handle)
+
+        assert all(isinstance(k, str) for k in mapping.keys())
+        assert all(isinstance(v, str) for v in mapping.values())
+
+        return mapping
+
+    regexes = load_regexes(regex_json)
+    split_col = f"tag_type_{read}"
+
+    (
+        pl.scan_parquet(src)
+        .pipe(classify_reads, regexes, col=split_col, into="category")
+        .sink_parquet(pl.PartitionBy(out_dir, key=split_col), mkdir=True)
+    )
