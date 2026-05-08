@@ -5,70 +5,13 @@ from typing import Mapping
 import polars as pl
 from rich.console import Console
 
-from bitags._typing import MoleculeType, ReadType
+from bitags._typing import ReadType
 from bitags.barcoding import barcode_reads
 from bitags.classification import classify_reads
-from bitags.patterns import r1_trim_regex, r2_barcode_regex, r2_trim_regex
+from bitags.manipulation import embed_barcode, to_unpaired
 from bitags.read_io import scan_fastq, sink_fastq
-from bitags.trimming import extract_barcode, trim_reads
+from bitags.trimming import trim_reads
 from bitags.viz import render_read_pair
-
-
-def trim(
-    src: str,
-    *,
-    schema: str,
-    molecule: MoleculeType,
-    out: str,
-    reads: tuple[ReadType, ...] = ("r1", "r2"),
-) -> None:
-    """Trim barcodes from the specified reads of a single molecule type.
-
-    Expects input pre-filtered to one molecule type (e.g. output of classify_and_split).
-    """
-    _regex = {"r1": r1_trim_regex, "r2": r2_trim_regex}
-    lf = pl.scan_parquet(src)
-    for read in reads:
-        lf = lf.pipe(trim_reads, _regex[read](schema, molecule), read=read)
-    lf.sink_parquet(out)
-
-
-_BARCODE_REGEX = {"r2": r2_barcode_regex}
-
-
-def transfer_barcode(
-    src: str,
-    src_read: ReadType,
-    dst_read: ReadType,
-    *,
-    schema: str,
-    molecule: MoleculeType,
-    out: str,
-) -> None:
-    """Extract the barcode from src_read and store it in dst_read's tag_seq.
-
-    Writes only dst_read columns. tag_type and tag_pos for dst_read are cleared
-    since positional info no longer applies after transfer.
-    """
-    lf = pl.scan_parquet(src)
-    dst_cols = [c for c in lf.collect_schema().names() if c.endswith(f"_{dst_read}")]
-
-    (
-        lf.pipe(
-            extract_barcode,
-            _BARCODE_REGEX[src_read](schema, molecule),
-            read=src_read,
-            into="barcode",
-        )
-        .with_columns(
-            pl.col("barcode").alias(f"tag_seq_{dst_read}"),
-            pl.lit("").alias(f"tag_type_{dst_read}"),
-            pl.lit([], dtype=pl.List(pl.UInt32)).alias(f"tag_pos_{dst_read}"),
-        )
-        .drop("barcode")
-        .select(dst_cols)
-        .sink_parquet(out)
-    )
 
 
 def visualize(
@@ -165,3 +108,24 @@ def split(src: str, out_dir: str, *, regex_json: str, read: ReadType = "r1") -> 
         .pipe(classify_reads, regexes, col=split_col, into="category")
         .sink_parquet(pl.PartitionBy(out_dir, key=split_col), mkdir=True)
     )
+
+
+def trim(
+    src: str,
+    out: str,
+    *,
+    regex: str,
+    read: ReadType = "r1",
+    tags_only: bool = False,
+) -> None:
+    """Trim a read in a parquet file using a two-group regex and write the result.
+
+    The regex is matched against tag_type; group 1 defines tags to remove from the
+    5' end, group 2 from the 3' end. Sequence and quality are trimmed alongside
+    the tag columns and tag positions are adjusted to the new sequence start.
+    When tags_only=True, only the tag columns are trimmed; sequence and quality are untouched.
+    """
+    pl.scan_parquet(src).pipe(
+        trim_reads, regex=regex, read=read, tags_only=tags_only
+    ).sink_parquet(out)
+

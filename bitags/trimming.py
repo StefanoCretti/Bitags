@@ -1,71 +1,8 @@
 from types import SimpleNamespace
 
-from bitags._typing import ReadType
-
 import polars as pl
 
-
-def _get_read_cols(read: str) -> SimpleNamespace:
-    """Return column name attributes for the given read suffix."""
-    return SimpleNamespace(
-        seq=f"sequence_{read}",
-        qual=f"quality_{read}",
-        tag_seq=f"tag_seq_{read}",
-        tag_type=f"tag_type_{read}",
-        tag_pos=f"tag_pos_{read}",
-    )
-
-
-def _add_trim_counts(lf: pl.LazyFrame, regex: str, col: str) -> pl.LazyFrame:
-    """Match a two-group regex against col and add _n_left/_n_right tag-count columns."""
-
-    def _count(c: str) -> pl.Expr:
-        """Count colon-separated items in a capture group; returns 0 if null/empty."""
-        return (
-            pl.when(pl.col(c).is_null() | (pl.col(c) == ""))
-            .then(pl.lit(0, dtype=pl.UInt32))
-            .otherwise(pl.col(c).str.split(":").list.len())
-        )
-
-    return (
-        lf.with_columns(
-            pl.col(col)
-            .str.extract_groups(regex)
-            .struct.rename_fields(["_left", "_right"])
-            .alias("_groups")
-        )
-        .unnest("_groups")
-        .with_columns(_n_left=_count("_left"), _n_right=_count("_right"))
-        .drop("_left", "_right")
-    )
-
-
-def extract_barcode(
-    lf: pl.LazyFrame,
-    regex: str,
-    *,
-    read: ReadType = "r2",
-    into: str = "barcode",
-) -> pl.LazyFrame:
-    """Extract the barcode portion of tag_seq using the same regex format as trim_reads.
-
-    Capture group 1 = left tags to skip, capture group 2 = right tags to skip.
-    The remaining colon-joined tag_seq values are stored in `into`.
-    """
-    cols = _get_read_cols(read)
-    split_seq = pl.col(cols.tag_seq).str.split(":")
-    return (
-        _add_trim_counts(lf, regex, cols.tag_type)
-        .with_columns(
-            split_seq.list.slice(
-                pl.col("_n_left"),
-                split_seq.list.len() - pl.col("_n_left") - pl.col("_n_right"),
-            )
-            .list.join(":")
-            .alias(into)
-        )
-        .drop("_n_left", "_n_right")
-    )
+from bitags._typing import ReadType
 
 
 def trim_reads(
@@ -73,68 +10,117 @@ def trim_reads(
     regex: str,
     *,
     read: ReadType = "r1",
+    tags_only: bool = False,
 ) -> pl.LazyFrame:
-    """Trim reads by removing tags matched by the two capture groups of the regex.
+    """Trim reads using the two capture groups of the regex matched against tag_type.
 
-    The regex is matched against tag_type. The first capture group defines tags
-    to remove from the 5' end, the second from the 3' end. Either group may be
-    absent (no trimming on that side). Sequence, quality, and tag positions are
-    sliced and adjusted accordingly.
+    Group 1 defines tags to remove from the 5' end, group 2 from the 3' end.
+    When tags_only=False (default), sequence and quality are also trimmed and tag
+    positions are adjusted relative to the new sequence start. When tags_only=True,
+    only tag_seq, tag_type, and tag_pos are trimmed; sequence and quality are untouched.
     """
+
+    def _get_read_cols(read: str) -> SimpleNamespace:
+        """Return column name attributes for the given read suffix."""
+        return SimpleNamespace(
+            seq=f"sequence_{read}",
+            qual=f"quality_{read}",
+            tag_seq=f"tag_seq_{read}",
+            tag_type=f"tag_type_{read}",
+            tag_pos=f"tag_pos_{read}",
+        )
+
     cols = _get_read_cols(read)
+    original_cols = lf.collect_schema().names()
 
-    def _seq_slice_bounds(lf: pl.LazyFrame) -> pl.LazyFrame:
-        """Add _seq_start and _seq_end columns defining the region to keep.
+    def _tag_bounds(lf: pl.LazyFrame, regex: str) -> pl.LazyFrame:
+        """Match regex against tag_type and add _first_tag/_last_tag columns.
 
-        _seq_start: position right after the last left-trimmed tag ends.
-        _seq_end:   position where the first right-trimmed tag starts.
+        _first_tag: index of the first kept tag (left-inclusive).
+        _last_tag:  index past the last kept tag (right-exclusive).
+        """
+
+        def tag_count(c: str) -> pl.Expr:
+            return (
+                pl.when(pl.col(c).is_null() | (pl.col(c) == ""))
+                .then(pl.lit(0, dtype=pl.UInt32))
+                .otherwise(pl.col(c).str.split(":").list.len())
+            )
+
+        return (
+            lf.with_columns(
+                pl.col(cols.tag_type)
+                .str.extract_groups(regex)
+                .struct.rename_fields(["_left", "_right"])
+                .alias("_groups")
+            )
+            .unnest("_groups")
+            .with_columns(
+                tag_count("_left").alias("_first_tag"),
+                (tag_count(cols.tag_type) - tag_count("_right")).alias("_last_tag"),
+            )
+            .drop("_left", "_right")
+        )
+
+    def _trim_tag_cols(lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Slice tag_seq, tag_type, tag_pos in-place using _first_tag/_last_tag."""
+        tag_slice = (
+            pl.col("_first_tag"),
+            pl.col("_last_tag") - pl.col("_first_tag"),
+        )
+        return lf.with_columns(
+            pl.col(cols.tag_pos).list.slice(*tag_slice),
+            pl.col(cols.tag_seq).str.split(":").list.slice(*tag_slice).list.join(":"),
+            pl.col(cols.tag_type).str.split(":").list.slice(*tag_slice).list.join(":"),
+        )
+
+    def _seq_bounds(lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Add _first_base/_last_base using the original (pre-trim) tag columns.
+
+        _first_base: sequence position right after the last left-trimmed tag ends.
+        _last_base:  sequence position where the first right-trimmed tag starts.
         """
         return lf.with_columns(
             (
-                pl.when(pl.col("_n_left") == 0)
+                pl.when(pl.col("_first_tag") == 0)
                 .then(pl.lit(0, dtype=pl.UInt32))
                 .otherwise(
                     pl.col(cols.tag_pos).list.get(
-                        pl.col("_n_left") - 1, null_on_oob=True
+                        pl.col("_first_tag") - 1, null_on_oob=True
                     )
                     + pl.col(cols.tag_seq)
                     .str.split(":")
-                    .list.get(pl.col("_n_left") - 1, null_on_oob=True)
+                    .list.get(pl.col("_first_tag") - 1, null_on_oob=True)
                     .str.len_chars()
                 )
-            ).alias("_seq_start"),
+            ).alias("_first_base"),
             (
-                pl.when(pl.col("_n_right") == 0)
+                pl.when(pl.col("_last_tag") >= pl.col(cols.tag_pos).list.len())
                 .then(pl.col(cols.seq).str.len_chars())
                 .otherwise(
-                    pl.col(cols.tag_pos).list.get(
-                        -pl.col("_n_right").cast(pl.Int32), null_on_oob=True
-                    )
+                    pl.col(cols.tag_pos).list.get(pl.col("_last_tag"), null_on_oob=True)
                 )
-            ).alias("_seq_end"),
+            ).alias("_last_base"),
         )
 
-    def _apply_slices(lf: pl.LazyFrame) -> pl.LazyFrame:
-        """Slice sequence, quality, and tag columns, adjusting tag positions accordingly."""
-        tag_slice = (
-            pl.col("_n_left"),
-            pl.col(cols.tag_pos).list.len() - pl.col("_n_left") - pl.col("_n_right"),
-        )
-        seq_slice = pl.col("_seq_start"), pl.col("_seq_end") - pl.col("_seq_start")
-
+    def _trim_seq_cols(lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Slice sequence and quality using _first_base/_last_base, adjusting tag positions."""
+        seq_slice = pl.col("_first_base"), pl.col("_last_base") - pl.col("_first_base")
         return lf.with_columns(
-            pl.col(cols.tag_pos).list.slice(*tag_slice) - pl.col("_seq_start"),
-            pl.col(cols.tag_seq).str.split(":").list.slice(*tag_slice).list.join(":"),
-            pl.col(cols.tag_type).str.split(":").list.slice(*tag_slice).list.join(":"),
+            pl.col(cols.tag_pos) - pl.col("_first_base"),
             pl.col(cols.seq).str.slice(*seq_slice),
             pl.col(cols.qual).str.slice(*seq_slice),
         )
 
-    original_get_read_cols = lf.collect_schema().names()
-
+    # Note: order is a bit finicky since the expressions are dependent on each other
+    # - _seq_bounds must run before _trim_tag_cols since it reads the original tag positions
+    # - _trim_seq_cols must run after _trim_tag_cols since it adjusts tag position
+    if tags_only:
+        return _tag_bounds(lf, regex).pipe(_trim_tag_cols).select(original_cols)
     return (
-        _add_trim_counts(lf, regex, cols.tag_type)
-        .pipe(_seq_slice_bounds)
-        .pipe(_apply_slices)
-        .select(original_get_read_cols)
+        _tag_bounds(lf, regex)
+        .pipe(_seq_bounds)
+        .pipe(_trim_tag_cols)
+        .pipe(_trim_seq_cols)
+        .select(original_cols)
     )
