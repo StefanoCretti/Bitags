@@ -20,7 +20,7 @@ def classify_reads(
     expr = pl
     for label, pattern in regexes.items():
         expr = expr.when(pl.col(col).str.contains(pattern)).then(pl.lit(label))
-    assert isinstance(expr, pl.Expr)
+    assert isinstance(expr, pl.Expr), "At least one regex is required."
     return lf.with_columns(
         expr.otherwise(pl.lit(other)).cast(pl.Categorical).alias(into)
     )

@@ -83,12 +83,12 @@ def _export_console(console: Console, out: str | None) -> None:
         f.write(content)
 
 
-def render_reads(
+def visualize_reads(
     lf: pl.LazyFrame,
     num_rows: int,
     *,
     color_map: dict[str, str] | None = None,
-    out: str | None,
+    out: str | None = None,
 ) -> None:
     """Render a list of read-pair rows to the console with tag-highlighted sequences."""
 

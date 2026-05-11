@@ -64,12 +64,12 @@ def sink_fastq(
         sinks.append(_prepare("r2").sink_csv(r2, **sink_kwargs))
 
     if lazy:
-        return sinks[0] if len(sinks) == 0 else tuple(sinks)
+        return sinks[0] if len(sinks) == 1 else tuple(sinks)
 
     pl.collect_all(sinks)
 
 
-def scan_fastq(r1: str, r2: str | None) -> pl.LazyFrame:
+def scan_fastq(r1: str, r2: str | None = None) -> pl.LazyFrame:
     """Scan a (paired) fastq.gz into a polars lazyframe."""
 
     def _scan_read(fq: str, read: ReadType) -> pl.LazyFrame:

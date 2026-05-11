@@ -8,7 +8,7 @@ from bitags.classification import classify_reads
 from bitags.manipulation import embed_barcode, to_unpaired
 from bitags.read_io import scan_fastq, sink_fastq
 from bitags.trimming import trim_reads
-from bitags.visualization import render_reads
+from bitags.visualization import visualize_reads
 
 __all__ = [
     "barcode",
@@ -71,7 +71,7 @@ def split(src: str, out_dir: str, *, regex_json: str, read: ReadType = "r1") -> 
     (
         pl.scan_parquet(src)
         .pipe(classify_reads, regexes, col=split_col, into="category")
-        .sink_parquet(pl.PartitionBy(out_dir, key=split_col), mkdir=True)
+        .sink_parquet(pl.PartitionBy(out_dir, key="category"), mkdir=True)
     )
 
 
@@ -138,4 +138,4 @@ def visualize(
         with open(color_map, "r") as handle:
             cmap = json.load(handle)
 
-    pl.scan_parquet(src).pipe(render_reads, num_rows=n, color_map=cmap, out=out)
+    pl.scan_parquet(src).pipe(visualize_reads, num_rows=n, color_map=cmap, out=out)
