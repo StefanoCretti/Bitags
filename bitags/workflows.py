@@ -3,12 +3,12 @@ import json
 import polars as pl
 
 from bitags._typing import ReadType
-from bitags.barcoding import barcode_reads
-from bitags.classification import classify_reads
-from bitags.manipulation import embed_barcode, to_unpaired
-from bitags.read_io import scan_fastq, sink_fastq
-from bitags.trimming import trim_reads
-from bitags.visualization import visualize_reads
+from bitags._barcoding import barcode_reads
+from bitags._classification import classify_reads
+from bitags._manipulation import embed_barcode, to_unpaired
+from bitags._read_io import scan_fastq, sink_fastq
+from bitags._trimming import trim_reads
+from bitags._visualization import visualize_reads
 
 __all__ = [
     "barcode",
