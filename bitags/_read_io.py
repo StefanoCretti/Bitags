@@ -52,11 +52,14 @@ def sink_fastq(
     has_r2 = any(c.endswith("_r2") for c in schema_names)
     if has_r2 and r2 is None:
         raise ValueError("LazyFrame is paired but no r2 output path was provided.")
+    if not has_r2 and r2:
+        raise ValueError("LazyFrame is unpaired but r2 output path was provided.")
 
     sink_kwargs = {
         "include_header": False,
         "quote_style": "never",
         "compression": "gzip",
+        "lazy": True,
     }
 
     sinks = [_prepare("r1").sink_csv(r1, **sink_kwargs)]
