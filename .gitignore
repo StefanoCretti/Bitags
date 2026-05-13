@@ -2,6 +2,7 @@
 target
 Cargo.lock
 *__pycache__
+*.so
 
 # Testing files
 test_tool.sh
