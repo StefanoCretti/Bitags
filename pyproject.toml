@@ -8,6 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["polars>=1.0", "oxbow>=0.4", "rich>=15.0", "seaborn>=0.13"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [tool.maturin]
 module-name = "bitags._lib"
 features = ["pyo3/extension-module"]
