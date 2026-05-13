@@ -1,3 +1,4 @@
+import re
 from types import SimpleNamespace
 
 import polars as pl
@@ -19,6 +20,10 @@ def trim_reads(
     positions are adjusted relative to the new sequence start. When tags_only=True,
     only tag_seq, tag_type, and tag_pos are trimmed; sequence and quality are untouched.
     """
+    if not (regex.startswith("^") and regex.endswith("$")):
+        raise ValueError("regex must have start (^) and end ($) anchors")
+    if re.compile(regex).groups != 2:
+        raise ValueError("regex must have exactly two capturing groups")
 
     def _get_read_cols(read: str) -> SimpleNamespace:
         """Return column name attributes for the given read suffix."""
