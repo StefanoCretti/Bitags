@@ -1,4 +1,5 @@
 import gzip
+import json
 from pathlib import Path
 
 import polars as pl
@@ -105,6 +106,42 @@ def trimming_cases() -> dict[str, tuple[str, pl.DataFrame]]:
         key[0]: (group["regex"][0], group.drop("key", "regex"))
         for key, group in df.group_by("key", maintain_order=True)
     }
+
+
+@pytest.fixture
+def parquet_paired_reads(paired_reads, tmp_path) -> str:
+    path = str(tmp_path / "paired_reads.parquet")
+    paired_reads.sink_parquet(path)
+    return path
+
+
+@pytest.fixture
+def parquet_unpaired_reads(unpaired_reads, tmp_path) -> str:
+    path = str(tmp_path / "unpaired_reads.parquet")
+    unpaired_reads.sink_parquet(path)
+    return path
+
+
+@pytest.fixture
+def parquet_paired_tagged_reads(paired_tagged_reads, tmp_path) -> str:
+    path = str(tmp_path / "paired_tagged_reads.parquet")
+    paired_tagged_reads.sink_parquet(path)
+    return path
+
+
+@pytest.fixture
+def tags_tsv(tags, tmp_path) -> str:
+    path = str(tmp_path / "tags.tsv")
+    tags.write_csv(path, separator="\t")
+    return path
+
+
+@pytest.fixture
+def classification_json(classification_regexes, tmp_path) -> str:
+    path = str(tmp_path / "classification.json")
+    with open(path, "w") as f:
+        json.dump(classification_regexes, f)
+    return path
 
 
 @pytest.fixture

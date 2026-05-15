@@ -1,0 +1,17 @@
+import click
+
+
+@click.group()
+def cli():
+    """Bitap-based barcoding and downstream processing of sequencing reads."""
+
+
+from . import (  # noqa: E402, F401
+    barcode,
+    embed,
+    fastq_to_parquet,
+    parquet_to_fastq,
+    split,
+    trim,
+    visualize,
+)

@@ -6,10 +6,13 @@ build-backend = "maturin"
 name = "bitags"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["polars>=1.0", "oxbow>=0.4", "rich>=15.0", "seaborn>=0.13"]
+dependencies = ["polars>=1.40", "oxbow>=0.4", "rich>=15.0", "seaborn>=0.13", "click>=8.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[project.scripts]
+bitags = "bitags.cli:cli"
 
 [tool.maturin]
 module-name = "bitags._lib"
