@@ -8,6 +8,6 @@ name = "bitags"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3 = { version = "0.27", features = ["extension-module", "abi3-py312"] }
 pyo3-polars = { version = "0.26", features = ["derive", "dtype-struct"] }
 serde = { version = "1", features = ["derive"] }
