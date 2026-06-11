@@ -5,8 +5,27 @@ build-backend = "maturin"
 [project]
 name = "bitags"
 dynamic = ["version"]
+description = "Fast and flexible suite of operations for barcoded NGS reads."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Stefano Cretti", email = "stefanocretti99@gmail.com" }]
 requires-python = ">=3.12"
+keywords = ["ngs", "bioinformatics", "barcoding", "combinatorial-barcoding", "fastq", "bitap"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "License :: OSI Approved :: BSD Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
 dependencies = ["polars>=1.40", "oxbow>=0.4", "rich>=15.0", "seaborn>=0.13", "click>=8.0"]
+
+[project.urls]
+Repository = "https://github.com/StefanoCretti/Bitags"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
