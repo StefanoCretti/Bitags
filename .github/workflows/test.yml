@@ -21,17 +21,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Run Rust tests
         run: cargo test
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install maturin and pytest
+        run: pip install maturin pytest
 
       - name: Build and install package
-        run: maturin develop
-
-      - name: Install dev dependencies
-        run: pip install pytest
+        run: maturin build --release --out dist && pip install dist/*.whl
 
       - name: Run Python tests
         run: pytest tests/
