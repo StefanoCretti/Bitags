@@ -11,6 +11,7 @@ from . import (  # noqa: E402, F401
     classify,
     embed,
     fastq_to_parquet,
+    filter,
     parquet_to_fastq,
     trim,
     visualize,

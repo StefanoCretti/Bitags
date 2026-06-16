@@ -172,6 +172,96 @@ def test_trim_invalid_regex_exits_nonzero(parquet_paired_tagged_reads, tmp_path)
     assert result.exit_code != 0
 
 
+def test_filter_exact(parquet_paired_tagged_reads, paired_tagged_reads, tmp_path):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "filter",
+            parquet_paired_tagged_reads,
+            out,
+            "-c",
+            "tag_type_r1",
+            "-p",
+            "TagA:TagDNA",
+        ],
+    )
+    assert result.exit_code == 0
+    expected = paired_tagged_reads.filter(
+        pl.col("tag_type_r1") == "TagA:TagDNA"
+    ).collect()
+    assert pl.read_parquet(out).equals(expected)
+
+
+def test_filter_exact_no_match_substring(parquet_paired_tagged_reads, tmp_path):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "filter",
+            parquet_paired_tagged_reads,
+            out,
+            "-c",
+            "tag_type_r1",
+            "-p",
+            "TagDNA",
+        ],
+    )
+    assert result.exit_code == 0
+    assert len(pl.read_parquet(out)) == 0
+
+
+def test_filter_exact_with_excluded(
+    parquet_paired_tagged_reads, paired_tagged_reads, tmp_path
+):
+    out = str(tmp_path / "out.parquet")
+    excluded = str(tmp_path / "excluded.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "filter",
+            parquet_paired_tagged_reads,
+            out,
+            "-c",
+            "tag_type_r1",
+            "-p",
+            "TagA:TagDNA",
+            "-e",
+            excluded,
+        ],
+    )
+    assert result.exit_code == 0
+    base = paired_tagged_reads.collect()
+    assert pl.read_parquet(out).equals(
+        base.filter(pl.col("tag_type_r1") == "TagA:TagDNA")
+    )
+    assert pl.read_parquet(excluded).equals(
+        base.filter(pl.col("tag_type_r1") != "TagA:TagDNA")
+    )
+
+
+def test_filter_regex(parquet_paired_tagged_reads, paired_tagged_reads, tmp_path):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "filter",
+            parquet_paired_tagged_reads,
+            out,
+            "-c",
+            "tag_type_r1",
+            "-p",
+            "TagDNA",
+            "--regex",
+        ],
+    )
+    assert result.exit_code == 0
+    expected = paired_tagged_reads.filter(
+        pl.col("tag_type_r1").str.contains("TagDNA")
+    ).collect()
+    assert pl.read_parquet(out).equals(expected)
+
+
 @pytest.mark.parametrize("read", ["r1", "r2"])
 def test_classify(
     parquet_paired_tagged_reads,
