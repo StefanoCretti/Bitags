@@ -29,12 +29,43 @@ from . import cli
     default=False,
     help="Trim only tag columns; leave sequence and quality untouched.",
 )
-def trim(src: str, out: str, regex: str, read: ReadType, tags_only: bool) -> None:
+@click.option(
+    "-m",
+    "--min-length",
+    type=int,
+    default=None,
+    help="Discard reads whose trimmed sequence is shorter than this length.",
+)
+@click.option(
+    "-e",
+    "--excluded",
+    type=click.Path(exists=False),
+    default=None,
+    help="Optional path to write reads that do not pass the --min-length cutoff.",
+)
+def trim(
+    src: str,
+    out: str,
+    regex: str,
+    read: ReadType,
+    tags_only: bool,
+    min_length: int | None,
+    excluded: str | None,
+) -> None:
     """Trim a read using a two-group regex.
 
     SRC is the parquet file with the barcoded reads.
     OUT is the parquet file in which to save the results (must not exist).
     """
-    pl.scan_parquet(src).pipe(
+    if excluded is not None and min_length is None:
+        raise click.UsageError("-e/--excluded requires -m/--min-length to be set.")
+    lf = pl.scan_parquet(src).pipe(
         trim_reads, regex=regex, read=read, tags_only=tags_only
-    ).sink_parquet(out)
+    )
+    if min_length is not None:
+        length_expr = pl.col(f"sequence_{read}").str.len_chars() >= min_length
+        lf.filter(length_expr).sink_parquet(out)
+        if excluded is not None:
+            lf.filter(~length_expr).sink_parquet(excluded)
+    else:
+        lf.sink_parquet(out)

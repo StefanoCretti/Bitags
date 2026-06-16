@@ -172,6 +172,71 @@ def test_trim_invalid_regex_exits_nonzero(parquet_paired_tagged_reads, tmp_path)
     assert result.exit_code != 0
 
 
+def test_trim_min_length(
+    parquet_paired_tagged_reads, paired_tagged_reads, trimming_cases, tmp_path
+):
+    regex, overrides = trimming_cases["trim_one_5'"]
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli, ["trim", parquet_paired_tagged_reads, out, "-r", regex, "-m", "10"]
+    )
+    assert result.exit_code == 0
+    base = paired_tagged_reads.collect()
+    expected = base.with_columns(overrides[col] for col in overrides.columns).filter(
+        pl.col("sequence_r1").str.len_chars() >= 10
+    )
+    assert pl.read_parquet(out).equals(expected)
+
+
+def test_trim_min_length_with_excluded(
+    parquet_paired_tagged_reads, paired_tagged_reads, trimming_cases, tmp_path
+):
+    regex, overrides = trimming_cases["trim_one_5'"]
+    out = str(tmp_path / "out.parquet")
+    excluded = str(tmp_path / "excluded.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "trim",
+            parquet_paired_tagged_reads,
+            out,
+            "-r",
+            regex,
+            "-m",
+            "10",
+            "-e",
+            excluded,
+        ],
+    )
+    assert result.exit_code == 0
+    base = paired_tagged_reads.collect()
+    trimmed = base.with_columns(overrides[col] for col in overrides.columns)
+    assert pl.read_parquet(out).equals(
+        trimmed.filter(pl.col("sequence_r1").str.len_chars() >= 10)
+    )
+    assert pl.read_parquet(excluded).equals(
+        trimmed.filter(pl.col("sequence_r1").str.len_chars() < 10)
+    )
+
+
+def test_trim_excluded_without_min_length_exits_nonzero(
+    parquet_paired_tagged_reads, tmp_path
+):
+    result = CliRunner().invoke(
+        cli,
+        [
+            "trim",
+            parquet_paired_tagged_reads,
+            str(tmp_path / "out.parquet"),
+            "-r",
+            "^(TagA).*?()$",
+            "-e",
+            str(tmp_path / "excluded.parquet"),
+        ],
+    )
+    assert result.exit_code != 0
+
+
 def test_filter_exact(parquet_paired_tagged_reads, paired_tagged_reads, tmp_path):
     out = str(tmp_path / "out.parquet")
     result = CliRunner().invoke(
