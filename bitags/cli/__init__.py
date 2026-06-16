@@ -8,10 +8,10 @@ def cli():
 
 from . import (  # noqa: E402, F401
     barcode,
+    classify,
     embed,
     fastq_to_parquet,
     parquet_to_fastq,
-    split,
     trim,
     visualize,
 )

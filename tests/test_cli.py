@@ -173,20 +173,20 @@ def test_trim_invalid_regex_exits_nonzero(parquet_paired_tagged_reads, tmp_path)
 
 
 @pytest.mark.parametrize("read", ["r1", "r2"])
-def test_split(
+def test_classify(
     parquet_paired_tagged_reads,
     paired_tagged_reads,
     classification_json,
     tmp_path,
     read,
 ):
-    out_dir = str(tmp_path / "split")
+    out = str(tmp_path / "out.parquet")
     result = CliRunner().invoke(
         cli,
         [
-            "split",
+            "classify",
             parquet_paired_tagged_reads,
-            out_dir,
+            out,
             "-r",
             classification_json,
             "--read",
@@ -194,10 +194,8 @@ def test_split(
         ],
     )
     assert result.exit_code == 0
-    subfolders = {p.name for p in (tmp_path / "split").iterdir() if p.is_dir()}
-    assert subfolders == {"category=DNA", "category=RNA", "category=Other"}
     base = paired_tagged_reads.collect()
     expected = base.with_columns(
         pl.col(f"category_{read}").cast(pl.Categorical).alias("category")
     )
-    assert pl.read_parquet(out_dir).sort("name_r1").equals(expected.sort("name_r1"))
+    assert pl.read_parquet(out).sort("name_r1").equals(expected.sort("name_r1"))
