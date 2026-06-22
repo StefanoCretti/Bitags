@@ -40,3 +40,10 @@ def test_trim_malformed_regex_raises(
 ):
     with pytest.raises(ValueError):
         trim_reads(paired_tagged_reads, malformed_trimming_regexes[key])
+
+
+def test_trim_fill_empty_false_leaves_empty_sequences(paired_tagged_reads):
+    result = trim_reads(
+        paired_tagged_reads, r"^(TagA).*?(TagDNA)$", fill_empty=False
+    ).collect()
+    assert (result["sequence_r1"].str.len_chars() == 0).any()

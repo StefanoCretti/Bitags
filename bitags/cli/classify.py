@@ -29,7 +29,6 @@ from . import cli
     help="Category label and regex. Repeatable; order is preserved.",
 )
 @click.option(
-    "-r",
     "--read",
     type=click.Choice(["r1", "r2"]),
     default="r1",

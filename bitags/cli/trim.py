@@ -30,6 +30,13 @@ from . import cli
     help="Trim only tag columns; leave sequence and quality untouched.",
 )
 @click.option(
+    "--fill-empty",
+    type=bool,
+    default=True,
+    show_default=True,
+    help="Replace empty trimmed sequences with a single N/I placeholder.",
+)
+@click.option(
     "-m",
     "--min-length",
     type=int,
@@ -49,6 +56,7 @@ def trim(
     regex: str,
     read: ReadType,
     tags_only: bool,
+    fill_empty: bool,
     min_length: int | None,
     excluded: str | None,
 ) -> None:
@@ -60,7 +68,7 @@ def trim(
     if excluded is not None and min_length is None:
         raise click.UsageError("-e/--excluded requires -m/--min-length to be set.")
     lf = pl.scan_parquet(src).pipe(
-        trim_reads, regex=regex, read=read, tags_only=tags_only
+        trim_reads, regex=regex, read=read, tags_only=tags_only, fill_empty=fill_empty
     )
     if min_length is not None:
         length_expr = pl.col(f"sequence_{read}").str.len_chars() >= min_length

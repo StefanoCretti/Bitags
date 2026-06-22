@@ -12,6 +12,7 @@ def trim_reads(
     *,
     read: ReadType = "r1",
     tags_only: bool = False,
+    fill_empty: bool = True,
 ) -> pl.LazyFrame:
     """Trim reads using the two capture groups of the regex matched against tag_type.
 
@@ -19,6 +20,9 @@ def trim_reads(
     When tags_only=False (default), sequence and quality are also trimmed and tag
     positions are adjusted relative to the new sequence start. When tags_only=True,
     only tag_seq, tag_type, and tag_pos are trimmed; sequence and quality are untouched.
+    When fill_empty=True (default), reads whose trimmed sequence is empty are given
+    a single 'N' in the sequence column and a single 'I' in the quality column.
+    This prevents empty sequences, which are not valid in FASTQ format.
     """
     if not (regex.startswith("^") and regex.endswith("$")):
         raise ValueError("regex must have start (^) and end ($) anchors")
@@ -117,15 +121,31 @@ def trim_reads(
             pl.col(cols.qual).str.slice(*seq_slice),
         )
 
+    def _fill_empty_seq(lf: pl.LazyFrame) -> pl.LazyFrame:
+        empty = pl.col(cols.seq).str.len_chars() == 0
+        return lf.with_columns(
+            pl.when(empty)
+            .then(pl.lit("N"))
+            .otherwise(pl.col(cols.seq))
+            .alias(cols.seq),
+            pl.when(empty)
+            .then(pl.lit("I"))
+            .otherwise(pl.col(cols.qual))
+            .alias(cols.qual),
+        )
+
     # Note: order is a bit finicky since the expressions are dependent on each other
     # - _seq_bounds must run before _trim_tag_cols since it reads the original tag positions
     # - _trim_seq_cols must run after _trim_tag_cols since it adjusts tag position
     if tags_only:
         return _tag_bounds(lf, regex).pipe(_trim_tag_cols).select(original_cols)
-    return (
+    result = (
         _tag_bounds(lf, regex)
         .pipe(_seq_bounds)
         .pipe(_trim_tag_cols)
         .pipe(_trim_seq_cols)
         .select(original_cols)
     )
+    if fill_empty:
+        result = result.pipe(_fill_empty_seq)
+    return result
