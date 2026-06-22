@@ -342,7 +342,7 @@ def test_classify(
             "classify",
             parquet_paired_tagged_reads,
             out,
-            "-r",
+            "-j",
             classification_json,
             "--read",
             read,
@@ -354,3 +354,80 @@ def test_classify(
         pl.col(f"category_{read}").cast(pl.Categorical).alias("category")
     )
     assert pl.read_parquet(out).sort("name_r1").equals(expected.sort("name_r1"))
+
+
+@pytest.mark.parametrize("read", ["r1", "r2"])
+def test_classify_inline_categories(
+    parquet_paired_tagged_reads,
+    paired_tagged_reads,
+    classification_regexes,
+    tmp_path,
+    read,
+):
+    out = str(tmp_path / "out.parquet")
+    args = ["classify", parquet_paired_tagged_reads, out, "--read", read]
+    for label, pattern in classification_regexes.items():
+        args += ["-c", label, pattern]
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0
+    base = paired_tagged_reads.collect()
+    expected = base.with_columns(
+        pl.col(f"category_{read}").cast(pl.Categorical).alias("category")
+    )
+    assert pl.read_parquet(out).sort("name_r1").equals(expected.sort("name_r1"))
+
+
+def test_classify_inline_and_json_mutually_exclusive(
+    parquet_paired_tagged_reads, classification_json, tmp_path
+):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "classify",
+            parquet_paired_tagged_reads,
+            out,
+            "-j",
+            classification_json,
+            "-c",
+            "DNA",
+            ".*",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "not both" in result.output
+
+
+def test_classify_no_regexes_fails(parquet_paired_tagged_reads, tmp_path):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(cli, ["classify", parquet_paired_tagged_reads, out])
+    assert result.exit_code != 0
+
+
+def test_classify_custom_other_label(
+    parquet_paired_tagged_reads, classification_json, tmp_path
+):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "classify",
+            parquet_paired_tagged_reads,
+            out,
+            "-j",
+            classification_json,
+            "-o",
+            "Unassigned",
+        ],
+    )
+    assert result.exit_code == 0
+    categories = pl.read_parquet(out)["category"].cast(pl.String).unique().to_list()
+    assert "Other" not in categories
+
+
+def test_classify_category_missing_pattern_fails(parquet_paired_tagged_reads, tmp_path):
+    out = str(tmp_path / "out.parquet")
+    result = CliRunner().invoke(
+        cli, ["classify", parquet_paired_tagged_reads, out, "-c", "DNA"]
+    )
+    assert result.exit_code != 0
