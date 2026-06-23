@@ -1,3 +1,4 @@
+import warnings
 from typing import Iterable, Literal, overload
 
 import oxbow as ox
@@ -89,7 +90,10 @@ def sink_fastq(
 
     paired = is_paired(lf)
     if paired and r2 is None:
-        raise ValueError("LazyFrame is paired but no r2 output path was provided.")
+        warnings.warn(
+            "Data is paired but no r2 path was provided; r2 will not be written.",
+            UserWarning,
+        )
     if not paired and r2:
         raise ValueError("LazyFrame is unpaired but r2 output path was provided.")
 

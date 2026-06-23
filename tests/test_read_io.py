@@ -24,8 +24,8 @@ def test_scan_fastq_paired(fastq_r1, fastq_r2, paired_reads):
 # --- sink_fastq ---
 
 
-def test_sink_fastq_raises_when_paired_but_no_r2_path(paired_reads, tmp_path):
-    with pytest.raises(ValueError, match="paired"):
+def test_sink_fastq_warns_when_paired_but_no_r2_path(paired_reads, tmp_path):
+    with pytest.warns(UserWarning, match="r2 will not be written"):
         sink_fastq(paired_reads, r1=str(tmp_path / "out.fastq.gz"))
 
 
