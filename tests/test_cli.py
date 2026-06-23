@@ -28,7 +28,8 @@ def test_parquet_to_fastq_unpaired(parquet_unpaired_reads, unpaired_reads, tmp_p
         cli, ["parquet-to-fastq", parquet_unpaired_reads, "--r1", out_r1]
     )
     assert result.exit_code == 0
-    assert scan_fastq(out_r1).collect().equals(unpaired_reads.collect())
+    expected = unpaired_reads.with_columns(pl.lit("").alias("description_r1")).collect()
+    assert scan_fastq(out_r1).collect().equals(expected)
 
 
 def test_parquet_to_fastq_unpaired_with_r2_path_exits_nonzero(
@@ -48,19 +49,18 @@ def test_parquet_to_fastq_unpaired_with_r2_path_exits_nonzero(
     assert result.exit_code != 0
 
 
-def test_parquet_to_fastq_paired_without_r2_path_exits_nonzero(
-    parquet_paired_reads, tmp_path
-):
-    result = CliRunner().invoke(
-        cli,
-        [
-            "parquet-to-fastq",
-            parquet_paired_reads,
-            "--r1",
-            str(tmp_path / "out_r1.fastq.gz"),
-        ],
-    )
-    assert result.exit_code != 0
+def test_parquet_to_fastq_paired_without_r2_path_warns(parquet_paired_reads, tmp_path):
+    with pytest.warns(UserWarning, match="r2 will not be written"):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "parquet-to-fastq",
+                parquet_paired_reads,
+                "--r1",
+                str(tmp_path / "out_r1.fastq.gz"),
+            ],
+        )
+    assert result.exit_code == 0
 
 
 def test_parquet_to_fastq_paired(parquet_paired_reads, paired_reads, tmp_path):
@@ -70,10 +70,36 @@ def test_parquet_to_fastq_paired(parquet_paired_reads, paired_reads, tmp_path):
         cli, ["parquet-to-fastq", parquet_paired_reads, "--r1", out_r1, "--r2", out_r2]
     )
     assert result.exit_code == 0
-    assert scan_fastq(out_r1, out_r2).collect().equals(paired_reads.collect())
+    expected = paired_reads.with_columns(pl.lit("").alias("description_r1")).collect()
+    assert scan_fastq(out_r1, out_r2).collect().equals(expected)
 
 
-def test_parquet_to_fastq_tags(
+def test_parquet_to_fastq_tags_unpaired(
+    parquet_unpaired_tagged_reads, unpaired_tagged_reads, tmp_path
+):
+    out_r1 = str(tmp_path / "out_r1.fastq.gz")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "parquet-to-fastq",
+            parquet_unpaired_tagged_reads,
+            "--r1",
+            out_r1,
+            "-t",
+            "CB",
+            "Z",
+            "tag_seq_r1",
+        ],
+    )
+    assert result.exit_code == 0
+    base = unpaired_tagged_reads.collect()
+    assert (
+        scan_fastq(out_r1).collect()["description_r1"].to_list()
+        == ("CB:Z:" + base["tag_seq_r1"]).to_list()
+    )
+
+
+def test_parquet_to_fastq_tags_paired(
     parquet_paired_tagged_reads, paired_tagged_reads, tmp_path
 ):
     out_r1 = str(tmp_path / "out_r1.fastq.gz")
@@ -97,7 +123,63 @@ def test_parquet_to_fastq_tags(
     base = paired_tagged_reads.collect()
     assert (
         scan_fastq(out_r1).collect()["description_r1"].to_list()
+        == ("CB:Z:" + base["tag_seq_r1"]).to_list()
+    )
+
+
+def test_parquet_to_fastq_tags_keep_description(
+    parquet_unpaired_tagged_reads, unpaired_tagged_reads, tmp_path
+):
+    out_r1 = str(tmp_path / "out_r1.fastq.gz")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "parquet-to-fastq",
+            parquet_unpaired_tagged_reads,
+            "--r1",
+            out_r1,
+            "-t",
+            "CB",
+            "Z",
+            "tag_seq_r1",
+            "--keep-description",
+        ],
+    )
+    assert result.exit_code == 0
+    base = unpaired_tagged_reads.collect()
+    assert (
+        scan_fastq(out_r1).collect()["description_r1"].to_list()
         == (base["description_r1"] + "\tCB:Z:" + base["tag_seq_r1"]).to_list()
+    )
+
+
+def test_parquet_to_fastq_tags_empty_and_keep_description(
+    unpaired_tagged_reads, tmp_path
+):
+    parquet = str(tmp_path / "empty_desc.parquet")
+    unpaired_tagged_reads.with_columns(pl.lit("").alias("description_r1")).sink_parquet(
+        parquet
+    )
+    out_r1 = str(tmp_path / "out_r1.fastq.gz")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "parquet-to-fastq",
+            parquet,
+            "--r1",
+            out_r1,
+            "-t",
+            "CB",
+            "Z",
+            "tag_seq_r1",
+            "--keep-description",
+        ],
+    )
+    assert result.exit_code == 0
+    base = unpaired_tagged_reads.collect()
+    assert (
+        scan_fastq(out_r1).collect()["description_r1"].to_list()
+        == ("CB:Z:" + base["tag_seq_r1"]).to_list()
     )
 
 

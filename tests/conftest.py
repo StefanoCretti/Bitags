@@ -123,6 +123,13 @@ def parquet_unpaired_reads(unpaired_reads, tmp_path) -> str:
 
 
 @pytest.fixture
+def parquet_unpaired_tagged_reads(unpaired_tagged_reads, tmp_path) -> str:
+    path = str(tmp_path / "unpaired_tagged_reads.parquet")
+    unpaired_tagged_reads.sink_parquet(path)
+    return path
+
+
+@pytest.fixture
 def parquet_paired_tagged_reads(paired_tagged_reads, tmp_path) -> str:
     path = str(tmp_path / "paired_tagged_reads.parquet")
     paired_tagged_reads.sink_parquet(path)
