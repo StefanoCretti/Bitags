@@ -1,22 +1,38 @@
-from typing import Literal, overload
+from typing import Iterable, Literal, overload
 
 import oxbow as ox
 import polars as pl
 
-from bitags._typing import ReadType
+from bitags._schema import get_read_cols, is_paired
+from bitags._typing import ReadType, SamTag
 
 
 @overload
 def sink_fastq(
-    lf: pl.LazyFrame, *, r1: str, r2: str, lazy: Literal[True] = ...
+    lf: pl.LazyFrame,
+    *,
+    r1: str,
+    r2: str,
+    tags: Iterable[SamTag] | None = ...,
+    lazy: Literal[True] = ...,
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]: ...
 @overload
 def sink_fastq(
-    lf: pl.LazyFrame, *, r1: str, r2: None = ..., lazy: Literal[True] = ...
+    lf: pl.LazyFrame,
+    *,
+    r1: str,
+    r2: None = ...,
+    tags: Iterable[SamTag] | None = ...,
+    lazy: Literal[True] = ...,
 ) -> pl.LazyFrame: ...
 @overload
 def sink_fastq(
-    lf: pl.LazyFrame, *, r1: str, r2: str | None, lazy: Literal[False]
+    lf: pl.LazyFrame,
+    *,
+    r1: str,
+    r2: str | None,
+    tags: Iterable[SamTag] | None,
+    lazy: Literal[False],
 ) -> None: ...
 
 
@@ -25,34 +41,56 @@ def sink_fastq(
     *,
     r1: str,
     r2: str | None = None,
+    tags: Iterable[SamTag] | None = None,
     lazy: bool = False,
 ) -> None | pl.LazyFrame | tuple[pl.LazyFrame, pl.LazyFrame]:
     """Write a LazyFrame with _r1/_r2 suffixed columns as gzipped fastq files.
 
     Always sinks r1. Sinks r2 only if a path is given and _r2 columns are present.
+
+    tags is a list of (tag_name, tag_type, column_name) tuples appended to the R1
+    description as tab-separated SAM optional fields. column_name must be the full
+    column name as it appears in the frame (e.g. "tag_seq_r1" or a bare column).
     """
-    schema_names = lf.collect_schema().names()
 
-    def _prepare(suffix: str) -> pl.LazyFrame:
-        cols = [c for c in schema_names if c.endswith(f"_{suffix}")]
+    def _tag_str(tag: SamTag) -> pl.Expr:
+        """Convert a tag into its sam/bam tag string representation."""
+        tag_name, tag_type, column = tag
+        return pl.format(f"{tag_name}:{tag_type}:{{}}", pl.col(column))
 
-        _strip_suffix = {c: c[: -(len(suffix) + 1)] for c in cols}
-        _create_read: pl.Expr = pl.concat_str(
-            [
-                pl.format("@{} {}", pl.col("name"), pl.col("description")),
-                pl.col("sequence"),
-                pl.lit("+"),
-                pl.col("quality"),
-            ],
-            separator="\n",
-        ).alias("read")
+    def _description_with_tags(col: str, tags: Iterable[SamTag]) -> pl.Expr:
+        """Concatenate the bam/sam tags to the read description, id any."""
+        return pl.concat_str(
+            [pl.col(col).replace("", None)] + [_tag_str(tag) for tag in tags],
+            separator="\t",
+            ignore_nulls=True,
+        ).fill_null("")
 
-        return lf.select(cols).rename(_strip_suffix).select(_create_read)
+    def _prepare_read(
+        lf: pl.LazyFrame,
+        read: ReadType,
+        tags: Iterable[SamTag],
+    ) -> pl.LazyFrame:
+        """Create a string column containing the info to sink to fastq."""
 
-    has_r2 = any(c.endswith("_r2") for c in schema_names)
-    if has_r2 and r2 is None:
+        cols = get_read_cols(read)
+        description = _description_with_tags(cols.description, tags)
+        return lf.select(
+            pl.concat_str(
+                [
+                    pl.format("@{} {}", pl.col(cols.name), description),
+                    pl.col(cols.seq),
+                    pl.lit("+"),
+                    pl.col(cols.qual),
+                ],
+                separator="\n",
+            ).alias("read")
+        )
+
+    paired = is_paired(lf)
+    if paired and r2 is None:
         raise ValueError("LazyFrame is paired but no r2 output path was provided.")
-    if not has_r2 and r2:
+    if not paired and r2:
         raise ValueError("LazyFrame is unpaired but r2 output path was provided.")
 
     sink_kwargs = {
@@ -62,9 +100,9 @@ def sink_fastq(
         "lazy": True,
     }
 
-    sinks = [_prepare("r1").sink_csv(r1, **sink_kwargs)]
+    sinks = [_prepare_read(lf, "r1", tags or ()).sink_csv(r1, **sink_kwargs)]
     if r2 is not None:
-        sinks.append(_prepare("r2").sink_csv(r2, **sink_kwargs))
+        sinks.append(_prepare_read(lf, "r2", ()).sink_csv(r2, **sink_kwargs))
 
     if lazy:
         return sinks[0] if len(sinks) == 1 else tuple(sinks)

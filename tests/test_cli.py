@@ -73,6 +73,34 @@ def test_parquet_to_fastq_paired(parquet_paired_reads, paired_reads, tmp_path):
     assert scan_fastq(out_r1, out_r2).collect().equals(paired_reads.collect())
 
 
+def test_parquet_to_fastq_tags(
+    parquet_paired_tagged_reads, paired_tagged_reads, tmp_path
+):
+    out_r1 = str(tmp_path / "out_r1.fastq.gz")
+    out_r2 = str(tmp_path / "out_r2.fastq.gz")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "parquet-to-fastq",
+            parquet_paired_tagged_reads,
+            "--r1",
+            out_r1,
+            "--r2",
+            out_r2,
+            "-t",
+            "CB",
+            "Z",
+            "tag_seq_r1",
+        ],
+    )
+    assert result.exit_code == 0
+    base = paired_tagged_reads.collect()
+    assert (
+        scan_fastq(out_r1).collect()["description_r1"].to_list()
+        == (base["description_r1"] + "\tCB:Z:" + base["tag_seq_r1"]).to_list()
+    )
+
+
 @pytest.mark.parametrize("read", ["r1", "r2"])
 def test_barcode_single_read(
     parquet_paired_reads, tags_tsv, paired_tagged_reads, tmp_path, read
@@ -96,58 +124,6 @@ def test_barcode_both_reads(
     assert result.exit_code == 0
     df = pl.read_parquet(out)
     assert df.equals(paired_tagged_reads.collect().select(df.columns))
-
-
-@pytest.mark.parametrize("source,target", [("r1", "r2"), ("r2", "r1")])
-def test_embed(
-    parquet_paired_tagged_reads, paired_tagged_reads, tmp_path, source, target
-):
-    out = str(tmp_path / "out.parquet")
-    result = CliRunner().invoke(
-        cli,
-        [
-            "embed",
-            parquet_paired_tagged_reads,
-            out,
-            "--source-read",
-            source,
-            "--target-read",
-            target,
-        ],
-    )
-    assert result.exit_code == 0
-    df = pl.read_parquet(out)
-    base = paired_tagged_reads.collect()
-    expected_names = (
-        base[f"name_{target}"] + "::" + base[f"tag_seq_{source}"]
-    ).to_list()
-    assert df["name_r1"].to_list() == expected_names
-    assert not any(c.endswith("_r2") for c in df.columns)
-
-
-def test_embed_no_remove_source(
-    parquet_paired_tagged_reads, paired_tagged_reads, tmp_path
-):
-    out = str(tmp_path / "out.parquet")
-    result = CliRunner().invoke(
-        cli,
-        [
-            "embed",
-            parquet_paired_tagged_reads,
-            out,
-            "--source-read",
-            "r1",
-            "--target-read",
-            "r2",
-            "--no-remove-source",
-        ],
-    )
-    assert result.exit_code == 0
-    base = paired_tagged_reads.collect()
-    expected = base.with_columns(
-        (base["name_r2"] + "::" + base["tag_seq_r1"]).alias("name_r2")
-    )
-    assert pl.read_parquet(out).equals(expected)
 
 
 def test_trim(

@@ -3,25 +3,6 @@ import polars as pl
 from bitags._typing import ReadType
 
 
-def embed_barcode(
-    lf: pl.LazyFrame,
-    source_read: ReadType,
-    target_read: ReadType,
-    separator: str = "::",
-) -> pl.LazyFrame:
-    """Append the barcode from source_read to the read name of target_read.
-
-    Concatenates name_{target_read} and tag_seq_{source_read} using separator
-    and writes the result back into name_{target_read}.
-    """
-    return lf.with_columns(
-        pl.concat_str(
-            [pl.col(f"name_{target_read}"), pl.col(f"tag_seq_{source_read}")],
-            separator=separator,
-        ).alias(f"name_{target_read}")
-    )
-
-
 def to_unpaired(lf: pl.LazyFrame, read: ReadType) -> pl.LazyFrame:
     """Drop the given read and return an unpaired frame.
 

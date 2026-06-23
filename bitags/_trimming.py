@@ -1,8 +1,8 @@
 import re
-from types import SimpleNamespace
 
 import polars as pl
 
+from bitags._schema import get_read_cols
 from bitags._typing import ReadType
 
 
@@ -29,17 +29,7 @@ def trim_reads(
     if re.compile(regex).groups != 2:
         raise ValueError("regex must have exactly two capturing groups")
 
-    def _get_read_cols(read: str) -> SimpleNamespace:
-        """Return column name attributes for the given read suffix."""
-        return SimpleNamespace(
-            seq=f"sequence_{read}",
-            qual=f"quality_{read}",
-            tag_seq=f"tag_seq_{read}",
-            tag_type=f"tag_type_{read}",
-            tag_pos=f"tag_pos_{read}",
-        )
-
-    cols = _get_read_cols(read)
+    cols = get_read_cols(read)
     original_cols = lf.collect_schema().names()
 
     def _tag_bounds(lf: pl.LazyFrame, regex: str) -> pl.LazyFrame:

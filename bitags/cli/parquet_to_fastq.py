@@ -2,6 +2,7 @@ import click
 import polars as pl
 
 from bitags._read_io import sink_fastq
+from bitags._typing import SamTag
 
 from . import cli
 
@@ -14,9 +15,20 @@ from . import cli
     default=None,
     help="Output path for the R2 fastq.gz file (paired reads only).",
 )
-def parquet_to_fastq(src: str, r1: str, r2: str | None) -> None:
+@click.option(
+    "-t",
+    "--tag",
+    "tags",
+    nargs=3,
+    multiple=True,
+    metavar="NAME TYPE COLUMN",
+    help="Append a column as a SAM tag to the R1 description. Repeatable.",
+)
+def parquet_to_fastq(
+    src: str, r1: str, r2: str | None, tags: tuple[SamTag, ...]
+) -> None:
     """Convert a parquet file back to fastq.gz files.
 
     SRC is the parquet file with the reads to convert.
     """
-    sink_fastq(pl.scan_parquet(src), r1=r1, r2=r2)
+    sink_fastq(pl.scan_parquet(src), r1=r1, r2=r2, tags=tags or None)
