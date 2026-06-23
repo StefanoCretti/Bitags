@@ -25,7 +25,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run Rust tests
-        run: cargo test --release
+        run: cargo test
 
       - name: Install maturin and pytest
         run: pip install maturin pytest
