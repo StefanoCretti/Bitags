@@ -16,6 +16,7 @@ def sink_fastq(
     r2: str,
     tags: Iterable[SamTag] | None = ...,
     lazy: Literal[True] = ...,
+    keep_description: bool = ...,
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]: ...
 @overload
 def sink_fastq(
@@ -25,6 +26,7 @@ def sink_fastq(
     r2: None = ...,
     tags: Iterable[SamTag] | None = ...,
     lazy: Literal[True] = ...,
+    keep_description: bool = ...,
 ) -> pl.LazyFrame: ...
 @overload
 def sink_fastq(
@@ -34,6 +36,7 @@ def sink_fastq(
     r2: str | None,
     tags: Iterable[SamTag] | None,
     lazy: Literal[False],
+    keep_description: bool = ...,
 ) -> None: ...
 
 
@@ -44,14 +47,18 @@ def sink_fastq(
     r2: str | None = None,
     tags: Iterable[SamTag] | None = None,
     lazy: bool = False,
+    keep_description: bool = False,
 ) -> None | pl.LazyFrame | tuple[pl.LazyFrame, pl.LazyFrame]:
     """Write a LazyFrame with _r1/_r2 suffixed columns as gzipped fastq files.
 
-    Always sinks r1. Sinks r2 only if a path is given and _r2 columns are present.
+    Always writes r1. Writes r2 only if r2 is provided; emits a warning instead
+    of raising if the frame is paired but r2 is omitted.
 
-    tags is a list of (tag_name, tag_type, column_name) tuples appended to the R1
-    description as tab-separated SAM optional fields. column_name must be the full
-    column name as it appears in the frame (e.g. "tag_seq_r1" or a bare column).
+    tags: SAM optional fields appended to the R1 description as tab-separated
+    (tag_name, tag_type, column_name) tuples. column_name must match the full
+    column name in the frame (e.g. "tag_seq_r1"). By default only the tags are
+    written to the description; set keep_description=True to prepend the original
+    description (note: this may interfere with alignment tools).
     """
 
     def _tag_str(tag: SamTag) -> pl.Expr:
@@ -59,23 +66,24 @@ def sink_fastq(
         tag_name, tag_type, column = tag
         return pl.format(f"{tag_name}:{tag_type}:{{}}", pl.col(column))
 
-    def _description_with_tags(col: str, tags: Iterable[SamTag]) -> pl.Expr:
-        """Concatenate the bam/sam tags to the read description, id any."""
-        return pl.concat_str(
-            [pl.col(col).replace("", None)] + [_tag_str(tag) for tag in tags],
-            separator="\t",
-            ignore_nulls=True,
-        ).fill_null("")
+    def _description_with_tags(col: str, tags: Iterable[SamTag], keep: bool) -> pl.Expr:
+        """Concatenate the bam/sam tags to the read description, if any."""
+        tag_exprs = [_tag_str(tag) for tag in tags]
+        parts = ([pl.col(col).replace("", None)] if keep else []) + tag_exprs
+        if not parts:
+            return pl.lit("")
+        return pl.concat_str(parts, separator="\t", ignore_nulls=True).fill_null("")
 
     def _prepare_read(
         lf: pl.LazyFrame,
         read: ReadType,
         tags: Iterable[SamTag],
+        keep: bool = True,
     ) -> pl.LazyFrame:
         """Create a string column containing the info to sink to fastq."""
 
         cols = get_read_cols(read)
-        description = _description_with_tags(cols.description, tags)
+        description = _description_with_tags(cols.description, tags, keep)
         return lf.select(
             pl.concat_str(
                 [
@@ -104,7 +112,11 @@ def sink_fastq(
         "lazy": True,
     }
 
-    sinks = [_prepare_read(lf, "r1", tags or ()).sink_csv(r1, **sink_kwargs)]
+    sinks = [
+        _prepare_read(lf, "r1", tags or (), keep=keep_description).sink_csv(
+            r1, **sink_kwargs
+        )
+    ]
     if r2 is not None:
         sinks.append(_prepare_read(lf, "r2", ()).sink_csv(r2, **sink_kwargs))
 
