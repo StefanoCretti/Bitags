@@ -283,6 +283,29 @@ mod matching_tests {
         assert_eq!(match_pattern(b"AACG", &tag), None);
     }
 
+    // ── N in read (always a mismatch) ────────────────────────────────────────
+
+    #[test]
+    fn n_in_read_counts_as_mismatch_within_budget() {
+        // AACNA: N at position 3 → 1 mismatch vs AACAA; max_mism=1 → match
+        let tag = make_tag("AACAA", 1);
+        assert_eq!(match_pattern(b"AACNA", &tag), Some(0));
+    }
+
+    #[test]
+    fn n_in_read_blocks_match_when_over_budget() {
+        // CCCNC: N at position 3 → 1 mismatch vs CCCCC; max_mism=0 → no match
+        let tag = make_tag("CCCCC", 0);
+        assert_eq!(match_pattern(b"CCCNC", &tag), None);
+    }
+
+    #[test]
+    fn all_n_read_does_not_match_or_panic() {
+        // NNNNN: every position is a mismatch; must not panic and must return None
+        let tag = make_tag("ACGTA", 0);
+        assert_eq!(match_pattern(b"NNNNN", &tag), None);
+    }
+
     // ── Truncated tag at read sides ───────────────────────────────────────────
 
     #[test]
